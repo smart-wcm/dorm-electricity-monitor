@@ -1,0 +1,41 @@
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+
+# ===== Python 缓存 =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ===== 本地配置（含凭证，严禁提交） =====
+.env
+.env.local
+.env.*.local
+
+# ===== 本地数据与运行生成物 =====
+dorm_balance.json
+chart.png
+qr.png
+deploy/
+
+# ===== 编辑器 / IDE =====
+.idea/
+.vscode/
+*.swp
+
+# ===== WorkBuddy 内部数据（项目记忆/工具状态，非源码，勿提交） =====
+.workbuddy/
+
+# ===== 临时预览 / 测试文件（本项目开发期产生） =====
+_chart_*.py
+_preview_*.py
+preview_*.png
+test_*.py
+_verify.py
+*_preview.py
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db

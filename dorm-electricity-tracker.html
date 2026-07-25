@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>宿舍用电小账本</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --card:#ffffff; --ink:#1f2933; --sub:#6b7785;
+    --line:#e3e8ee; --accent:#2f7d4f; --accent2:#2563eb; --warn:#d97706; --danger:#dc2626;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    padding:14px; padding-bottom:40px; max-width:560px; margin:0 auto;}
+  h1{font-size:19px; margin:4px 0 2px;}
+  .sub{color:var(--sub); font-size:12.5px; margin-bottom:12px;}
+  .alert{background:#fff4e5; border:1px solid #fcd9a3; color:#92400e;
+    padding:10px 12px; border-radius:10px; font-size:13px; margin-bottom:12px; display:none;}
+  .alert.show{display:block;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;}
+  .stat{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:11px 12px;}
+  .stat .k{color:var(--sub); font-size:11.5px; margin-bottom:4px;}
+  .stat .v{font-size:19px; font-weight:600;}
+  .stat .v small{font-size:12px; font-weight:400; color:var(--sub);}
+  .stat.full{grid-column:1 / -1;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:13px; margin-bottom:12px;}
+  .card h2{font-size:14px; margin:0 0 10px; display:flex; justify-content:space-between; align-items:center;}
+  label{display:block; font-size:12.5px; color:var(--sub); margin:8px 0 4px;}
+  input,select{width:100%; padding:10px; border:1px solid var(--line); border-radius:9px;
+    font-size:15px; background:#fff; color:var(--ink);}
+  .row{display:flex; gap:8px;}
+  .row > *{flex:1;}
+  button{font-size:15px; border:none; border-radius:9px; padding:11px; cursor:pointer; font-weight:600;}
+  .btn-primary{background:var(--accent); color:#fff; width:100%; margin-top:12px;}
+  .btn-ghost{background:#eef2f6; color:var(--ink);}
+  .btn-sm{font-size:12.5px; padding:7px 10px; font-weight:500; background:#eef2f6; color:var(--sub);}
+  .now-link{font-size:12.5px; color:var(--accent2); background:none; padding:0; font-weight:500; margin-top:6px; display:inline-block;}
+  canvas{width:100%; display:block;}
+  .chartbox{margin-top:6px;}
+  .legend{font-size:11.5px; color:var(--sub); margin-top:6px; display:flex; gap:14px; flex-wrap:wrap;}
+  .dot{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle;}
+  .list{list-style:none; margin:0; padding:0;}
+  .list li{display:flex; align-items:center; justify-content:space-between; padding:9px 2px;
+    border-bottom:1px solid var(--line); font-size:13.5px;}
+  .list li:last-child{border-bottom:none;}
+  .list .t{color:var(--sub); font-size:12px;}
+  .list .b{font-weight:600;}
+  .list .note{color:var(--sub); font-size:11.5px; margin-left:6px;}
+  .list .del{color:var(--danger); background:none; font-size:13px; padding:4px 8px;}
+  .rcg{color:var(--accent); font-size:11.5px; margin-left:6px;}
+  details{margin-bottom:12px;}
+  summary{cursor:pointer; font-size:13px; color:var(--sub); padding:4px 0;}
+  .hint{font-size:11.5px; color:var(--sub); line-height:1.6; margin-top:6px;}
+  .empty{color:var(--sub); font-size:13px; text-align:center; padding:18px 0;}
+  .toolbar{display:flex; gap:8px; flex-wrap:wrap;}
+  .toolbar button{flex:1; min-width:90px;}
+</style>
+</head>
+<body>
+  <h1>宿舍用电小账本</h1>
+  <div class="sub">每 6 小时记一笔余额，反推用电速率与剩余天数 · 数据仅存本机</div>
+
+  <div class="alert" id="alert"></div>
+
+  <div class="grid" id="stats"></div>
+
+  <div class="card">
+    <h2>记一笔</h2>
+    <label>时间（默认现在）</label>
+    <input type="datetime-local" id="f_time">
+    <button class="now-link" id="nowBtn">↻ 设为现在</button>
+    <label>余额（元）</label>
+    <input type="number" id="f_bal" inputmode="decimal" placeholder="例如 58.5" step="0.01">
+    <label>备注（可选，如「开空调」「周末」）</label>
+    <input type="text" id="f_note" placeholder="留空也行">
+    <button class="btn-primary" id="addBtn">记一笔</button>
+  </div>
+
+  <div class="card">
+    <h2>余额走势</h2>
+    <div class="chartbox"><canvas id="cBalance" height="190"></canvas></div>
+    <div class="legend"><span><i class="dot" style="background:var(--accent2)"></i>余额（元）</span></div>
+  </div>
+
+  <div class="card">
+    <h2>每笔用电量（元）</h2>
+    <div class="chartbox"><canvas id="cUse" height="190"></canvas></div>
+    <div class="legend"><span><i class="dot" style="background:var(--accent)"></i>用电</span><span style="color:var(--accent)">↑ 绿色为充值（不计入用电）</span></div>
+  </div>
+
+  <div class="card">
+    <h2>记录 <span class="t" id="cnt"></span></h2>
+    <ul class="list" id="list"></ul>
+    <div class="empty" id="empty">还没有记录。点「载入示例」看看效果，或直接记第一笔。</div>
+  </div>
+
+  <details>
+    <summary>设置 & 数据管理</summary>
+    <div class="card" style="margin-top:8px">
+      <label>电价（元/度，用于折算用电量）→ 当前约 <span id="kwhHint"></span></label>
+      <input type="number" id="s_price" step="0.01" inputmode="decimal">
+      <label>低余额预警阈值（元）</label>
+      <input type="number" id="s_thr" step="1" inputmode="decimal">
+      <label>统计窗口（天，用于算日均）</label>
+      <input type="number" id="s_win" step="1" inputmode="numeric">
+      <div class="toolbar" style="margin-top:12px">
+        <button class="btn-ghost" id="sampleBtn">载入示例</button>
+        <button class="btn-ghost" id="exportBtn">导出</button>
+        <button class="btn-ghost" id="importBtn">导入</button>
+        <button class="btn-ghost" id="clearBtn" style="color:var(--danger)">清空</button>
+      </div>
+      <input type="file" id="fileIn" accept="application/json" style="display:none">
+      <div class="hint">导出会把数据存成 .json 文件，换手机或清缓存前先导出备份。导入会<b>合并</b>到现有数据。</div>
+    </div>
+  </details>
+
+<script>
+const LS_E='dorm_elec_entries', LS_S='dorm_elec_settings';
+const $=id=>document.getElementById(id);
+const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d;}catch(e){return d;}};
+const save=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
+let entries=load(LS_E,[]);
+let settings=Object.assign({price:0.56,threshold:20,windowDays:7},load(LS_S,{}));
+
+function persist(){save(LS_E,entries);save(LS_S,settings);}
+function fmtM(n){return (Math.round(n*100)/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function pad(n){return String(n).padStart(2,'0');}
+function toInput(ms){const d=new Date(ms);return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;}
+function fmtT(ms){const d=new Date(ms);return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
+function fmtDay(ms){const d=new Date(ms);return `${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
+
+function intervals(){
+  const s=[...entries].sort((a,b)=>a.t-b.t);const out=[];
+  for(let i=1;i<s.length;i++){
+    const dt=(s[i].t-s[i-1].t)/3600000;
+    const db=s[i-1].b-s[i].b; // 正=用电
+    out.push({t0:s[i-1].t,t1:s[i].t,dt,db,recharge:db<0});
+  }
+  return out;
+}
+
+function stats(){
+  const iv=intervals();const now=Date.now();const win=settings.windowDays*86400000;
+  let recentC=0,recentH=0,last24=0,totalC=0,totalR=0;
+  for(const x of iv){
+    if(x.recharge){totalR+=(-x.db);continue;}
+    totalC+=x.db;
+    if(x.t1>=now-win){recentC+=x.db;recentH+=x.dt;}
+    if(x.t1>=now-86400000)last24+=x.db;
+  }
+  const avgDaily=recentH>0?recentC/recentH*24:0;
+  const cur=entries.length?[...entries].sort((a,b)=>b.t-a.t)[0].b:0;
+  const days=avgDaily>0?cur/avgDaily:Infinity;
+  const exh=avgDaily>0?now+days*86400000:null;
+  const kwh=settings.price>0?totalC/settings.price:0;
+  return {cur,avgDaily,days,exh,last24,totalC,totalR,kwh};
+}
+
+function render(){
+  const s=stats();
+  // alert
+  const al=$('alert');
+  if(entries.length && s.cur<=settings.threshold){
+    al.className='alert show';
+    al.textContent=`⚠️ 余额仅剩 ${fmtM(s.cur)} 元，低于预警线 ${settings.threshold} 元，该充值了！`;
+  } else al.className='alert';
+  // stats grid
+  const inf=(s.days===Infinity)?'—':`约 ${s.days.toFixed(1)} 天`;
+  const exhS=s.exh?fmtT(s.exh):'—';
+  $('stats').innerHTML=`
+    <div class="stat"><div class="k">当前余额</div><div class="v">¥${fmtM(s.cur)}</div></div>
+    <div class="stat"><div class="k">近24h用电</div><div class="v">¥${fmtM(s.last24)}</div></div>
+    <div class="stat"><div class="k">日均用电</div><div class="v">¥${fmtM(s.avgDaily)}<small>/天</small></div></div>
+    <div class="stat"><div class="k">预计可用</div><div class="v">${inf}</div></div>
+    <div class="stat full"><div class="k">预计耗尽时间${settings.price>0?` · 累计用电约 ${fmtM(s.kwh)} 度`:''}</div>
+      <div class="v">${exhS}${s.exh?' <small>（按近'+settings.windowDays+'天均值）</small>':''}</div></div>`;
+  // list
+  const sorted=[...entries].sort((a,b)=>b.t-a.t);
+  $('cnt').textContent=`共 ${entries.length} 笔`;
+  $('empty').style.display=entries.length?'none':'block';
+  $('list').innerHTML=sorted.map(e=>{
+    const prev=sorted.find(x=>x.t<e.t);
+    const diff=prev?prev.b-e.b:null;
+    let mid='';
+    if(diff===null) mid='<span class="t">首次</span>';
+    else if(diff<0) mid=`<span class="rcg">充值 +${fmtM(-diff)}</span>`;
+    else mid=`<span class="t">用 ${fmtM(diff)}</span>`;
+    return `<li><div><span class="b">¥${fmtM(e.b)}</span>${e.note?`<span class="note">${escapeHtml(e.note)}</span>`:''} ${mid}</div>
+      <div style="display:flex;align-items:center;gap:8px"><span class="t">${fmtT(e.t)}</span>
+      <button class="del" data-id="${e.t}">删</button></div></li>`;
+  }).join('');
+  $('list').querySelectorAll('.del').forEach(b=>b.onclick=()=>{entries=entries.filter(x=>x.t!=b.dataset.id);persist();render();});
+  // settings inputs
+  $('s_price').value=settings.price;$('s_thr').value=settings.threshold;$('s_win').value=settings.windowDays;
+  $('kwhHint').textContent=settings.price>0?`${settings.price} 元/度`:'未设';
+  drawBalance();drawUse();
+}
+function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function setupCanvas(cv){
+  const dpr=window.devicePixelRatio||1;const w=cv.clientWidth,h=190;
+  cv.width=w*dpr;cv.height=h*dpr;cv.style.height=h+'px';
+  const ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+  return {ctx,w,h};
+}
+function drawBalance(){
+  const cv=$('cBalance');if(entries.length<2){clearMsg(cv,'至少 2 笔才有走势');return;}
+  const s=[...entries].sort((a,b)=>a.t-b.t);
+  const {ctx,w,h}=setupCanvas(cv);const padL=38,padR=8,padT=10,padB=20;
+  const xs=s.map(e=>e.t),ys=s.map(e=>e.b);
+  const t0=Math.min(...xs),t1=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys);
+  const ylo=Math.max(0,ymin-Math.max(1,(ymax-ymin)*0.15)),yhi=ymax+Math.max(1,(ymax-ymin)*0.15);
+  const X=t=>padL+(t-t0)/(t1-t0||1)*(w-padL-padR);
+  const Y=v=>padT+(1-(v-ylo)/(yhi-ylo||1))*(h-padT-padB);
+  ctx.strokeStyle='#eef2f6';ctx.lineWidth=1;
+  for(let i=0;i<=3;i++){const v=ylo+(yhi-ylo)*i/3;const y=Y(v);ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(w-padR,y);ctx.stroke();
+    ctx.fillStyle='#9aa5b1';ctx.font='10px sans-serif';ctx.textAlign='right';ctx.fillText(v.toFixed(0),padL-4,y+3);}
+  ctx.strokeStyle='#2563eb';ctx.lineWidth=2;ctx.beginPath();
+  s.forEach((e,i)=>{const x=X(e.t),y=Y(e.b);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();
+  ctx.fillStyle='#2563eb';s.forEach(e=>{ctx.beginPath();ctx.arc(X(e.t),Y(e.b),2.5,0,7);ctx.fill();});
+  ctx.fillStyle='#9aa5b1';ctx.font='10px sans-serif';ctx.textAlign='left';ctx.fillText(fmtDay(t0),padL,h-6);ctx.textAlign='right';ctx.fillText(fmtDay(t1),w-padR,h-6);
+}
+function drawUse(){
+  const cv=$('cUse');const iv=intervals().filter(x=>!x.recharge&&x.dt>0);
+  if(iv.length<1){clearMsg(cv,'记 2 笔后显示每段用电');return;}
+  const {ctx,w,h}=setupCanvas(cv);const padL=30,padR=8,padT=10,padB=20;
+  const max=Math.max(...iv.map(x=>x.db),0.1);
+  const bw=Math.min(26,(w-padL-padR)/iv.length-4);
+  const X=i=>padL+(i+0.5)*((w-padL-padR)/iv.length);
+  const Y=v=>padT+(1-v/max)*(h-padT-padB);
+  ctx.strokeStyle='#eef2f6';ctx.lineWidth=1;
+  for(let i=0;i<=3;i++){const v=max*i/3;const y=Y(v);ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(w-padR,y);ctx.stroke();
+    ctx.fillStyle='#9aa5b1';ctx.font='10px sans-serif';ctx.textAlign='right';ctx.fillText(v.toFixed(1),padL-4,y+3);}
+  ctx.fillStyle='#2f7d4f';
+  iv.forEach((x,i)=>{const y=Y(x.db);const bh=h-padB-y;ctx.fillRect(X(i)-bw/2,y,bw,bh);});
+  ctx.fillStyle='#9aa5b1';ctx.font='10px sans-serif';ctx.textAlign='left';ctx.fillText(fmtDay(iv[0].t1),padL,h-6);ctx.textAlign='right';ctx.fillText(fmtDay(iv[iv.length-1].t1),w-padR,h-6);
+}
+function clearMsg(cv,msg){const {ctx,w,h}=setupCanvas(cv);ctx.fillStyle='#9aa5b1';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.fillText(msg,w/2,h/2);}
+
+// events
+$('nowBtn').onclick=()=>$('f_time').value=toInput(Date.now());
+$('addBtn').onclick=()=>{
+  const t=new Date($('f_time').value).getTime();const b=parseFloat($('f_bal').value);
+  if(isNaN(t)){alert('请选择时间');return;}
+  if(isNaN(b)||b<0){alert('请输入有效余额');return;}
+  entries.push({t,b,note:$('f_note').value.trim()});persist();render();
+  $('f_bal').value='';$('f_note').value='';$('f_time').value=toInput(Date.now());
+};
+$('s_price').onchange=e=>{settings.price=parseFloat(e.target.value)||0;persist();render();};
+$('s_thr').onchange=e=>{settings.threshold=parseFloat(e.target.value)||0;persist();render();};
+$('s_win').onchange=e=>{settings.windowDays=Math.max(1,parseInt(e.target.value)||7);persist();render();};
+$('sampleBtn').onclick=()=>{
+  const base=Date.now()-6*86400000;entries=[
+    {t:base,b:60,note:'初始'},
+    {t:base+6*3600000,b:58.4},
+    {t:base+12*3600000,b:56.9,note:'开空调'},
+    {t:base+18*3600000,b:55.1},
+    {t:base+24*3600000,b:53.3,note:''},
+    {t:base+30*3600000,b:51.8},
+    {t:base+36*3600000,b:50.0,note:'开空调'},
+    {t:base+42*3600000,b:48.2},
+    {t:base+48*3600000,b:46.5},
+    {t:base+54*3600000,b:44.9},
+    {t:base+60*3600000,b:43.0},
+    {t:base+66*3600000,b:41.2},
+    {t:base+72*3600000,b:39.5},
+    {t:base+78*3600000,b:55,note:'充值20'},
+    {t:base+84*3600000,b:53.4},
+    {t:base+90*3600000,b:51.7},
+    {t:base+96*3600000,b:49.9},
+    {t:base+102*3600000,b:48.1},
+    {t:base+108*3600000,b:46.4},
+    {t:base+114*3600000,b:44.8},
+    {t:base+120*3600000,b:43.0},
+    {t:base+126*3600000,b:41.2},
+    {t:base+132*3600000,b:39.5},
+    {t:base+138*3600000,b:37.9},
+    {t:base+144*3600000,b:56,note:'充值20'},
+    {t:base+150*3600000,b:54.3},
+    {t:base+156*3600000,b:52.6},
+  ];
+  persist();render();
+};
+$('exportBtn').onclick=()=>{
+  const blob=new Blob([JSON.stringify({entries,settings},null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='宿舍用电数据_'+new Date().toISOString().slice(0,10)+'.json';a.click();
+};
+$('importBtn').onclick=()=>$('fileIn').click();
+$('fileIn').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=()=>{try{const d=JSON.parse(r.result);if(d.entries){entries=entries.concat(d.entries);}
+    if(d.settings)settings=Object.assign(settings,d.settings);persist();render();alert('导入完成');}
+    catch(err){alert('文件格式不正确');}};r.readAsText(f);e.target.value='';};
+$('clearBtn').onclick=()=>{if(confirm('确定清空所有记录？建议先导出备份。')){entries=[];persist();render();}};
+window.addEventListener('resize',render);
+
+// init
+$('f_time').value=toInput(Date.now());
+render();
+</script>
+</body>
+</html>
