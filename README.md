@@ -149,7 +149,7 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 
 | 变量 | 是否必须 | 含义 |
 |------|---------|------|
-| `XJTU_CEMS_JWT` | ✅ 必填 | 抓包得到的登录 JWT（含学号姓名，勿提交） |
+| `XJTU_CEMS_JWT` | ✅ 必填 | 抓包得到的登录 JWT（含学号姓名，勿随意泄露） |
 | `XJTU_ROOM_ID` | ✅ 必填 | 宿舍房间号（roomId） |
 | `XJTU_RECIPIENT` | ✅ 必填 | 收件邮箱，接收所有通知与报告 |
 | `XJTU_SHARE_URL` | 可选 | 网页报告公网链接；填了二维码才有效 |
