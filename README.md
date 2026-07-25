@@ -1,6 +1,6 @@
-# 宿舍电费自动监控 · 西安交大创新港
+# 宿舍电费自动监控 · 西安交大创新港(A区)
 
-> 一个面向西安交通大学创新港同学的**宿舍电费自动监控**小工具：定时抓取学校「cems」系统余额，自动反推用电量，余额过低 / 用电异常时邮件提醒，并定期推送美观的趋势图报告。
+> 一个面向西安交通大学创新港A区（B/C区和畅园的同学应该也可以）同学的**宿舍电费自动监控**小工具：定时抓取学校「cems」系统余额，自动反推用电量，余额过低 / 用电异常时邮件提醒，并定期推送用电趋势图报告。
 
 ---
 
@@ -128,7 +128,7 @@ cp .env.example .env
 ```ini
 # 本地配置（含凭证），已被 .gitignore 排除，严禁提交
 XJTU_CEMS_JWT=eyJhbGci...你的完整JWT    # 必填：抓包得到的 Cookie
-XJTU_ROOM_ID=2899                        # 你的房间号
+XJTU_ROOM_ID=2899                        # 你的房间号（不等于真实房间号，需要查看抓包信息）
 XJTU_RECIPIENT=you@example.com            # 必填：收件邮箱
 XJTU_SHARE_URL=                          # 可选：网页报告公网链接
 AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
@@ -138,7 +138,7 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 
 ### 收件邮箱填谁的？（重要）
 
-- **发件人 = 你自己的「智能体邮箱」**：第 2 步 `agently-cli auth login` 授权后自动确定（形如 `xxx@agent.qq.com`），**不是**本仓库作者的地址。
+- **发件人 = 你自己的「智能体邮箱」**：第 2 步 `agently-cli auth login` 授权后自动确定（形如 `xxx@agent.qq.com`）。
 - **收件人 = `XJTU_RECIPIENT`**：填你平时看邮件的邮箱（可以是同一个智能体邮箱自收发，也可以是常用 QQ/163 邮箱）。不填脚本会直接报错退出。
 
 > ⚠️ **绝不要把真实 JWT 写进代码或提交到 Git**（JWT 内含学号、姓名）。本项目已从代码中移除硬编码凭证，统一由 `.env` 读取，`.env` 放在脚本同目录即可，**无需设置系统环境变量**。
@@ -150,7 +150,7 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 | 变量 | 是否必须 | 含义 |
 |------|---------|------|
 | `XJTU_CEMS_JWT` | ✅ 必填 | 抓包得到的登录 JWT（含学号姓名，勿提交） |
-| `XJTU_ROOM_ID` | 可选（默认 2899） | 宿舍房间号（roomId） |
+| `XJTU_ROOM_ID` | ✅ 必填 | 宿舍房间号（roomId） |
 | `XJTU_RECIPIENT` | ✅ 必填 | 收件邮箱，接收所有通知与报告 |
 | `XJTU_SHARE_URL` | 可选 | 网页报告公网链接；填了二维码才有效 |
 | `AGENTLY_BIN` | 可选（自动探测） | `agently-cli` 绝对路径；探测失败时需手填 |
@@ -227,19 +227,11 @@ dorm-electricity-monitor/
 - [x] Agent Mail 免费推送渠道
 - [x] 凭证安全外置（环境变量 / `.env`，去除硬编码）
 
-### 🔧 计划中的改进（v1.1+）
-- [ ] **JWT 自动刷新 / 登录态持久化**：当前 JWT 含过期时间，过期需重新抓包；拟加入自动续期或引导重新授权
-- [ ] **跨平台定时**：补充 Linux `cron` / macOS `launchd` 配置示例（目前仅 Windows 任务计划）
-- [ ] **Docker 化**：提供 `Dockerfile` + `docker-compose`，一键部署到 NAS / 云服务器
-- [ ] **多房间 / 多账户**：`roomId` 参数化，支持同时监控多个宿舍
-- [ ] **交互式仪表盘**：用 Plotly / ECharts 替代静态 PNG，网页可悬浮查看明细
-- [ ] **异常检测增强**：按自然日聚合基线、引入季节性 / 周节律，降低误报
-- [ ] **多渠道通知**：企业微信 / Server 酱 / Telegram 等免费通道
-- [ ] **单元测试 + CI**：GitHub Actions 跑 `pytest`，保证重构不破坏逻辑
-- [ ] **i18n**：补充英文 README 与界面文案
-- [ ] **移动端 PWA / 轻量小程序**探索（仅查看，不含后台定时）
 
-欢迎 Issue / PR 一起完善 👏
+因为是小白，对代码的理解仅限于本科学过的大计基和C++以及计算机二级hh
+这是我在workbuddy的帮助下vibecoding几个小时的产物
+肯定存在可以优化的地方
+欢迎大佬一起完善 👏
 
 ---
 
