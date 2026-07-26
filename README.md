@@ -81,7 +81,12 @@ flowchart LR
 
 ---
 
-## 六、安装与配置（小白版，3 步搞定）（懒人版：可以直接找个agent，发给它本仓库项目的网址，让它帮你搞定ALL）
+## 六、安装与配置（小白版，4 步搞定）（懒人版：可以直接找个agent，发给它本仓库项目的网址，让它帮你搞定ALL）
+
+### 第 0 步：抓包获取配置参数
+
+[抓包指南](抓包指南.md)
+获得参数：JWT/roomID
 
 ### 第 1 步：装好运行环境
 
@@ -94,7 +99,7 @@ pip install requests matplotlib "qrcode[pil]"
 ```
 
 - 需要 **Python ≥ 3.8**（电脑已装可跳过前两步）。
-- 邮件功能需要 **Node.js**（下一步会用到，没装的话去 nodejs.org 下个「LTS」版一路下一步即可）。
+- 手动操作的话，邮件功能需要 **Node.js**（下一步会用到，没装的话去 nodejs.org 下个「LTS」版一路下一步即可）。
 
 ### 第 2 步：配置 Agent Mail（这就是发邮件的通道）
 
@@ -131,7 +136,7 @@ cp .env.example .env
 ```ini
 # 本地配置（含凭证），已被 .gitignore 排除，严禁提交
 XJTU_CEMS_JWT=eyJhbGci...你的完整JWT    # 必填：抓包得到的 Cookie（有效期 30 天，到期需重新抓；详细步骤见 [抓包指南](抓包指南.md)）
-XJTU_ROOM_ID=2899                        # 你的房间号（不等于真实房间号，需要查看抓包信息）
+XJTU_ROOM_ID=××××                        # 你的房间号（不等于真实房间号，需要查看抓包信息）
 XJTU_RECIPIENT=you@example.com            # 必填：收件邮箱
 XJTU_SHARE_URL=                          # 可选：网页报告公网链接
 AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
@@ -184,13 +189,15 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 ## 七、部署运行
 
 ### Windows（推荐）
-用「任务计划程序」每 6 小时跑一次（无需 WorkBuddy / 任何 IDE，独立运行）：
+用「任务计划程序」每 6 小时跑一次（无需 WorkBuddy / 任何 IDE，独立运行，但是推荐让agent帮你部署好）：
 ```powershell
 $action = New-ScheduledTaskAction -Execute "<项目路径>\.venv\Scripts\python.exe" -Argument "dorm_elec_auto.py" -WorkingDirectory "<项目路径>"
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 6) -RepetitionDuration (New-TimeSpan -Days 3650)
 Register-ScheduledTask -TaskName "宿舍电费监控" -Action $action -Trigger $trigger -Force
 ```
 > `.env` 与脚本同目录即可（脚本会自动读取），**无需设置系统环境变量**。
+
+> 📌 **实测部署频率**：本文档默认按「每 6 小时」调度描述，但作者实际以 Windows 任务计划**每天 20:21 运行一次**，功能同样正常——周报/月报按「数据积累天数」触发（与调度频率无关），而「抓取连续失败 24 小时才告警」在每天节奏下约等于「容忍 1 个失败日」。你可按需要选择每 6h 或每天一次。
 
 ### 可选：公网网页报告
 将 `deploy/` 目录部署到任意静态托管（如 CloudStudio / GitHub Pages / Vercel），把链接填入 `SHARE_URL` 并重新生成，即可扫码访问。
@@ -207,14 +214,16 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 ├── dorm-electricity-tracker.html  # 手动版单文件网页工具（本地存储，免后端）
 ├── setup.py                 # 一键交互式配置 → 生成 .env（重跑保留已有值）
 ├── update_jwt.py            # 凭证续期专用：只更新 JWT 一行，其他配置不动
+├── test_core.py            # 单元测试（JWT解析/用量计算/异常检测）
 ├── run_dorm.bat             # Windows 任务计划启动器（自动定位脚本目录）
 ├── .env.example             # 配置模板（复制为 .env 后填写）
 ├── .gitignore
 ├── LICENSE                  # MIT 许可证
 ├── README.md
+├── 抓包指南.md            # 抓包获取 JWT 凭证图文教程
 ├── assets/
 │   └── preview.png          # README 效果示意图
-├── deploy/
+├── deploy/                 # 【运行生成，gitignore】网页报告目录（脚本生成 index.html）
 │   └── index.html           # 自包含网页报告（内嵌趋势图+二维码）
 ├── .env                     # 【本地生成，gitignore】真实凭证，切勿提交
 ├── .venv/                   # 【本地生成，gitignore】Python 虚拟环境
@@ -261,11 +270,12 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 本工具以 Windows 任务计划后台运行（无可见控制台），以下手段便于验证配置与排查问题：
 
 ```bash
-# 1) 只校验配置 + 解析 JWT 过期时间 + 打印将做什么，不抓数、不发包
-python dorm_elec_auto.py --dry-run
 
-# 2) 发送一封测试邮件，确认 Agent Mail 通道正常（收到即说明配置无误）
-python dorm_elec_auto.py --test-email
+# ⚠️ 必须用本项目 .venv 运行（不要用 anaconda 等其它 Python：
+#    其它环境的 matplotlib 在生成图表时可能原生崩溃 segfault）。
+.venv\Scripts\python.exe dorm_elec_auto.py --dry-run      # 0) 校验配置+解析JWT+预览将做什么
+.venv\Scripts\python.exe dorm_elec_auto.py --test-email   # 1) 发测试邮件，确认通道正常
+.venv\Scripts\python.exe dorm_elec_auto.py                # 2) 正常运行一次
 ```
 
 - **运行日志**：每次运行写入 `dorm_monitor.log`（按大小滚动，保留最近 3 份），含时间戳、步骤与错误原因，排障时优先查看。

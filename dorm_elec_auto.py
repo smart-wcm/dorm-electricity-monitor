@@ -565,12 +565,19 @@ img{{width:100%;border-radius:10px;margin-top:10px}}
 # ===================== 8. 二维码 =====================
 def gen_qr(url):
     if not url:
-        print("SHARE_URL 为空，跳过二维码（部署后填入再跑一次即可生成）。")
+        log.info("SHARE_URL 为空，跳过二维码（部署后填入再跑一次即可生成）。")
         return
-    import qrcode
-    img = qrcode.make(url)
-    img.save(QR_PNG)
-    print(f"二维码已生成: {QR_PNG} -> {url}")
+    try:
+        import qrcode
+    except ImportError:
+        log.warning("qrcode 模块未安装，跳过二维码生成。请运行：pip install \"qrcode[pil]\"")
+        return
+    try:
+        img = qrcode.make(url)
+        img.save(QR_PNG)
+        log.info("二维码已生成: %s -> %s", QR_PNG, url)
+    except Exception as e:
+        log.error("生成二维码失败: %s", e)
 
 # ===================== 9. 推送（Agent Mail CLI） =====================
 import subprocess
@@ -579,6 +586,7 @@ def _agently(args):
     """调用 agently-cli，返回 (returncode, stdout, stderr)。"""
     try:
         r = subprocess.run([AGENTLY_BIN] + args, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
                            timeout=60, cwd=os.path.dirname(os.path.abspath(__file__)))
         return r.returncode, r.stdout, r.stderr
     except FileNotFoundError:

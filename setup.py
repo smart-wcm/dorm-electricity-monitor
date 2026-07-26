@@ -54,7 +54,8 @@ def detect_agently():
             return c
     try:
         out = subprocess.run(["where", "agently-cli.cmd"],
-                             capture_output=True, text=True, shell=True)
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", shell=True)
         lines = [l.strip() for l in out.stdout.splitlines() if l.strip()]
         if lines:
             return lines[0]
