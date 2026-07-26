@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""一键配置：回答几个问题，自动把配置写入 .env（与脚本同目录）。
+"""一键配置 / 续期工具。
 
-用法：
+首次配置：
     python setup.py
-然后：
-    python dorm_elec_auto.py        # 测试跑一次
+日常续期 JWT（只改凭证，其他不动，更快）：
+    python update_jwt.py
+
+说明：
+- setup.py 重跑时会以现有 .env 的值为默认，直接回车即保留，
+  不必重新填写所有信息。
+- 更新的 .env 与脚本同目录。
 """
 import os
 import sys
@@ -15,9 +20,23 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
 
 
+def load_existing():
+    """读出现有 .env 的键值，仅用于预设默认值。"""
+    d = {}
+    if os.path.exists(ENV_PATH):
+        for line in open(ENV_PATH, encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            d[k.strip()] = v.strip().strip('"').strip("'")
+    return d
+
+
 def ask(prompt, default=""):
+    hint = " [保留现有]" if default else ""
     try:
-        val = input(f"{prompt}\n  > ").strip()
+        val = input(f"{prompt}{hint}\n  > ").strip()
     except EOFError:
         val = ""
     return val or default
@@ -33,7 +52,6 @@ def detect_agently():
     for c in candidates:
         if os.path.exists(c):
             return c
-    # 在 PATH 里找
     try:
         out = subprocess.run(["where", "agently-cli.cmd"],
                              capture_output=True, text=True, shell=True)
@@ -46,26 +64,28 @@ def detect_agently():
 
 
 def main():
+    old = load_existing()
     print("=" * 50)
-    print("   宿舍电费监控 · 一键配置")
+    print("   宿舍电费监控 · 配置（重跑会保留已有值）")
     print("=" * 50)
-    print("按提示输入以下信息（带 [默认值] 的直接回车即可）：\n")
+    print("直接回车 = 保留当前 .env 里的对应值；想改哪条就填哪条。\n")
 
-    jwt = ask("1) 登录 JWT（ProxyPin 抓包得到的 Cookie，含学号姓名，切勿外泄）")
+    jwt = ask("1) 登录 JWT（ProxyPin 抓包得到的 Cookie）", old.get("XJTU_CEMS_JWT", ""))
     if not jwt:
-        print("\n⚠️ JWT 不能为空。请先抓包获取后重新运行本脚本。")
+        print("\n⚠️ 当前没有可用 JWT，请先抓包获取后重新运行。")
         sys.exit(1)
 
-    room = ask("2) 宿舍房间号 roomId", "2899")
+    room = ask("2) 宿舍房间号 roomId", old.get("XJTU_ROOM_ID", "2899"))
 
-    recipient = ask("3) 收件邮箱（接收预警/周报/月报，可用智能体邮箱自收发）")
+    recipient = ask("3) 收件邮箱（接收预警/周报/月报）", old.get("XJTU_RECIPIENT", ""))
     if not recipient:
         print("\n⚠️ 收件邮箱不能为空。")
         sys.exit(1)
 
-    share = ask("4) 网页报告公网链接（CloudStudio 部署后获得，暂时可留空）", "")
+    share = ask("4) 网页报告公网链接（CloudStudio 部署后获得，可留空）",
+                old.get("XJTU_SHARE_URL", ""))
 
-    agently = ask("5) agently-cli 绝对路径（直接回车自动探测）", "")
+    agently = ask("5) agently-cli 绝对路径（回车自动探测）", old.get("AGENTLY_BIN", ""))
     if not agently:
         agently = detect_agently()
         if agently:
@@ -87,7 +107,7 @@ def main():
 
     print(f"\n✅ 配置已写入：{ENV_PATH}")
     print("下一步：运行 `python dorm_elec_auto.py` 测试一次；")
-    print("       定时任务配置见 README 第七章。")
+    print("       仅更新 JWT 可用更快的 `python update_jwt.py`。")
 
 
 if __name__ == "__main__":

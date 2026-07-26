@@ -118,6 +118,8 @@ python setup.py
 
 按提示回答几个问题（JWT、房间号、收件邮箱等），脚本自动生成 `.env`，**不用手动改任何文件**。
 
+> 💡 **日常续期 JWT 更快**：凭证每 30 天到期，到期只需重抓包后跑 `python update_jwt.py` 粘贴新 JWT 即可——它**只改 `.env` 里的 JWT 一行，其他配置（房间号、收件邮箱等）原样保留**，不必重跑本脚本重填所有信息。
+
 <details>
 <summary>备选：手动配置（不想跑脚本时用）</summary>
 
@@ -203,7 +205,8 @@ Register-ScheduledTask -TaskName "宿舍电费监控" -Action $action -Trigger $
 dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 ├── dorm_elec_auto.py        # 核心脚本：采集+计算+JWT过期检测+绘图+邮件推送+报告生成
 ├── dorm-electricity-tracker.html  # 手动版单文件网页工具（本地存储，免后端）
-├── setup.py                 # 一键交互式配置 → 生成 .env
+├── setup.py                 # 一键交互式配置 → 生成 .env（重跑保留已有值）
+├── update_jwt.py            # 凭证续期专用：只更新 JWT 一行，其他配置不动
 ├── run_dorm.bat             # Windows 任务计划启动器（自动定位脚本目录）
 ├── .env.example             # 配置模板（复制为 .env 后填写）
 ├── .gitignore
