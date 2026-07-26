@@ -19,6 +19,8 @@ dorm_balance.json
 chart.png
 qr.png
 deploy/
+dorm_monitor.log
+*.log
 
 # ===== 编辑器 / IDE =====
 .idea/
@@ -32,7 +34,6 @@ deploy/
 _chart_*.py
 _preview_*.py
 preview_*.png
-test_*.py
 _verify.py
 *_preview.py
 

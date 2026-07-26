@@ -33,6 +33,9 @@ import time
 import os
 import base64
 import io
+import logging
+import logging.handlers
+import argparse
 
 # ===================== 1. 配置区 =====================
 def _load_dotenv(path=None):
@@ -104,6 +107,7 @@ ANOMALY_COOLDOWN_DAYS = 1 # 异常邮件最短间隔(天)，避免连续轰炸
 # 登录凭证（JWT）过期检测：主动解析 exp 提前预警 + 抓取失败兜底邮件
 JWT_WARN_DAYS = 3          # 凭证剩余 <= N 天 时发「即将过期」提醒邮件
 JWT_WARN_COOLDOWN_DAYS = 1 # 「即将过期」提醒最短间隔(天)，避免每天轰炸
+FAIL_ALERT_HOURS = 24      # 抓取连续失败超此时长(小时)才发「持续异常」邮件；瞬时失败仅记日志，避免误报
 
 # ===================== 3. 文件/产物 =====================
 STORE = "dorm_balance.json"        # 历史永久存档
@@ -111,6 +115,9 @@ CHART_PNG = "chart.png"            # 趋势图
 DEPLOY_DIR = "deploy"              # 部署目录
 REPORT_HTML = os.path.join(DEPLOY_DIR, "index.html")  # 网页报告(部署用)
 QR_PNG = "qr.png"                  # 二维码
+LOG_FILE = "dorm_monitor.log"      # 运行日志（按大小滚动，排障用）
+# 日志器（handler 在 main() 里按运行环境挂载，避免导入即写文件）
+log = logging.getLogger("dorm_monitor")
 # 网页报告公网链接（二维码指向它）；部署后填入，建议用环境变量 XJTU_SHARE_URL 或写进 .env。
 # 留空则二维码留白（可后续补填后重跑生成）。
 SHARE_URL = (_LOCAL_ENV.get("XJTU_SHARE_URL")
@@ -128,6 +135,25 @@ def _fmt_ts(ts):
     if not ts:
         return "未知时间"
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+
+def setup_logging():
+    """挂载日志 handler：文件(dorm_monitor.log, 滚动) + 控制台。重复调用安全。"""
+    log.setLevel(logging.INFO)
+    if log.handlers:
+        return
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s",
+                             "%Y-%m-%d %H:%M:%S")
+    try:
+        fh = logging.handlers.RotatingFileHandler(
+            LOG_FILE, maxBytes=200000, backupCount=3, encoding="utf-8")
+        fh.setFormatter(fmt)
+        log.addHandler(fh)
+    except Exception:
+        pass
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    log.addHandler(ch)
 
 
 def jwt_exp_info(token):
@@ -152,29 +178,50 @@ def jwt_exp_info(token):
         return (None, None, False, False)
 
 
-def fetch_balance():
-    """抓取余额。鉴权失败抛 AuthExpired；其他网络/业务错误抛常规异常。"""
-    try:
-        r = requests.get(API_URL, headers=HEADERS, timeout=15)
-    except requests.RequestException as e:
-        raise RuntimeError(f"网络请求异常: {e}")
-    if r.status_code in (401, 403):
-        raise AuthExpired(f"HTTP {r.status_code}")
-    r.raise_for_status()
-    try:
-        data = r.json()
-    except ValueError:
-        raise ValueError(f"接口返回非 JSON: {r.text[:200]}")
-    code = data.get("code")
-    if code != 0:
-        msg = str(data.get("msg", "")).lower()
-        # 接口显式返回未登录/过期类信息，判定为凭证失效
-        if (any(k in msg for k in ("login", "unauthorized", "expired", "token",
-                                   "未登录", "登录", "授权", "过期", "失效"))
-                or code in (401, 403, -1)):
-            raise AuthExpired(f"接口返回未登录(code={code}, msg={data.get('msg')})")
-        raise ValueError(f"接口返回异常: {data}")
-    return float(data["data"])
+def fetch_balance(retries=3, backoff=2.0):
+    """抓取余额，带重试与指数退避。
+
+    鉴权失败（401/403/未登录）立即抛 AuthExpired（重试无意义）；
+    网络/HTTP/JSON 等瞬时错误最多重试 retries 次（退避 2/4/8...秒）。
+    """
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(API_URL, headers=HEADERS, timeout=15)
+        except requests.RequestException as e:
+            last_err = RuntimeError(f"网络请求异常: {e}")
+            log.warning("抓取第%d/%d 次失败(网络): %s", attempt, retries, e)
+        else:
+            if r.status_code in (401, 403):
+                raise AuthExpired(f"HTTP {r.status_code}")
+            try:
+                r.raise_for_status()
+            except requests.HTTPError as e:
+                last_err = e
+                log.warning("抓取第%d/%d 次失败(HTTP %d)", attempt, retries, r.status_code)
+            else:
+                try:
+                    data = r.json()
+                except ValueError:
+                    last_err = ValueError(f"接口返回非 JSON: {r.text[:200]}")
+                    log.warning("抓取第%d/%d 次失败(非 JSON)", attempt, retries)
+                else:
+                    code = data.get("code")
+                    if code != 0:
+                        msg = str(data.get("msg", "")).lower()
+                        # 接口显式返回未登录/过期类信息，判定为凭证失效
+                        if (any(k in msg for k in ("login", "unauthorized", "expired",
+                                                   "token", "未登录", "登录", "授权",
+                                                   "过期", "失效"))
+                                or code in (401, 403, -1)):
+                            raise AuthExpired(f"接口返回未登录(code={code}, msg={data.get('msg')})")
+                        last_err = ValueError(f"接口返回异常: {data}")
+                        log.warning("抓取第%d/%d 次失败(code=%s)", attempt, retries, code)
+                    else:
+                        return float(data["data"])
+        if attempt < retries:
+            time.sleep(backoff * (2 ** (attempt - 1)))
+    raise last_err if last_err else RuntimeError("未知抓取错误")
 
 # ===================== 5. 记录 & 计算（永久存储） =====================
 def load_history():
@@ -628,15 +675,73 @@ def _read_qr():
     return None
 
 # ===================== 10. 主流程 =====================
-def main():
+def validate_config():
+    """启动校验：凭证/收件人必填，房间号须正整数，agently-cli 路径须存在。失败即清晰报错退出。"""
     if not JWT_COOKIE:
         raise SystemExit(
-            "❌ 未配置 XJTU_CEMS_JWT：请设置环境变量，或将 .env.example 复制为 .env 后填写真实 JWT。")
+            "❌ 未配置 XJTU_CEMS_JWT：请将 .env.example 复制为 .env 后填写真实 JWT，"
+            "或运行 python update_jwt.py 粘贴新 JWT。")
     if not RECIPIENT:
         raise SystemExit(
-            "❌ 未配置 XJTU_RECIPIENT：请在 .env 中填写接收通知的邮箱（XJTU_RECIPIENT=you@example.com）。")
+            "❌ 未配置 XJTU_RECIPIENT：请在 .env 中填写接收通知的邮箱"
+            "（XJTU_RECIPIENT=you@example.com）。")
+    try:
+        rid = int(ROOM_ID)
+        if rid <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise SystemExit(f"❌ XJTU_ROOM_ID 必须是正整数，当前为：{ROOM_ID!r}")
+    if not os.path.exists(AGENTLY_BIN):
+        raise SystemExit(
+            f"❌ 找不到 agently-cli：{AGENTLY_BIN}\n"
+            f"请在 .env 设置正确的 AGENTLY_BIN 绝对路径，或先 `npm i -g agently-cli` 并 "
+            f"`agently-cli auth login` 授权。")
+
+
+def main():
+    # ===== 调试参数 =====
+    parser = argparse.ArgumentParser(description="宿舍电费自动监控")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="只校验配置+解析 JWT 过期时间+打印将做什么，不抓数不发包")
+    parser.add_argument("--test-email", action="store_true",
+                        help="发送一封测试邮件确认 Agent Mail 通道，然后退出")
+    args = parser.parse_args()
+
+    # ===== 配置校验（fail-fast）=====
+    validate_config()
+    setup_logging()
+    log.info("=== 开始运行 (PID %d) ===", os.getpid())
+
     now = int(time.time())
     h = load_history()
+
+    # ===== 调试：测试邮件 =====
+    if args.test_email:
+        ok = push_email_text("✅ 电费监控测试邮件",
+                             "这是一封测试邮件，说明 Agent Mail 通道正常。\n如收到说明配置无误。")
+        log.info("测试邮件发送结果: %s", ok)
+        return
+
+    # ===== 调试：dry-run =====
+    if args.dry_run:
+        exp_ts, days_left, expired, parseable = jwt_exp_info(JWT_COOKIE)
+        if parseable:
+            exp_str = _fmt_ts(exp_ts)
+            if expired:
+                warn = "（已过期！请重新抓包）"
+            elif days_left is not None and days_left <= JWT_WARN_DAYS:
+                warn = f"（还剩约 {days_left:.1f} 天，将发提醒）"
+            else:
+                warn = f"（还剩约 {days_left:.1f} 天）"
+        else:
+            exp_str, warn = "（无法解析，非标准 JWT）", ""
+        print(f"[dry-run] 房间号={ROOM_ID}  收件人={RECIPIENT}")
+        print(f"[dry-run] JWT 过期时间={exp_str} {warn}")
+        print(f"[dry-run] agently-cli={AGENTLY_BIN}  存在={'是' if os.path.exists(AGENTLY_BIN) else '否'}")
+        print(f"[dry-run] 历史记录 {len(h['history'])} 条；将执行：抓取余额→存档→"
+              f"(低余额/异常/周报/月报)判定→生成图表与网页报告")
+        print("[dry-run] 未抓取、未发送任何邮件。")
+        return
 
     # ===== 凭证过期主动检测（解析 JWT 的 exp 字段）=====
     # 提前 N 天发「即将过期」提醒；已过期则立即发「失效」提醒，避免监控静默中断
@@ -648,7 +753,7 @@ def main():
                 "你抓包得到的登录凭证（JWT）已于 %s 过期，脚本已无法继续查询余额，监控暂停。\n"
                 "请重新抓包，把新的 JWT 填入 .env 的 XJTU_CEMS_JWT 后重跑即可恢复。\n"
                 "重新抓包步骤见 README「六、安装与配置」一节。" % _fmt_ts(exp_ts))
-            print("凭证已过期，已发邮件通知")
+            log.info("凭证已过期，已发邮件通知")
         elif days_left is not None and days_left <= JWT_WARN_DAYS:
             if now - h.get("last_jwt_warn", 0) >= JWT_WARN_COOLDOWN_DAYS * 86400:
                 push_email_text(
@@ -658,9 +763,9 @@ def main():
                     (_fmt_ts(exp_ts), int(days_left)))
                 h["last_jwt_warn"] = now
                 save_history(h)
-                print("凭证即将过期，已发提醒邮件")
+                log.info("凭证即将过期，已发提醒邮件")
 
-    # ===== 抓取余额（失败兜底：区分「凭证失效」与「其他错误」）=====
+    # ===== 抓取余额（含重试退避；瞬时失败仅记日志，持续失败才邮件）=====
     try:
         bal = fetch_balance()
     except AuthExpired as e:
@@ -671,16 +776,24 @@ def main():
             "本次未记录新数据；修复后下次运行即恢复正常。" % e)
         raise SystemExit("凭证失效，已发邮件通知，退出。")
     except Exception as e:
-        push_email_text(
-            "⚠️ 电费抓取失败（非凭证问题）",
-            "本次查询接口出错：%s\n"
-            "可能是网络波动或服务器维护，下次运行会重试；若持续失败请检查网络/接口。" % e)
-        raise SystemExit("抓取失败，已发邮件通知，退出。")
+        last_ok = h.get("last_success")
+        if last_ok and (now - last_ok) >= FAIL_ALERT_HOURS * 3600:
+            push_email_text(
+                "⚠️ 电费抓取持续失败",
+                "自 %s 以来持续无法查询电费接口：%s\n"
+                "若为网络/服务器临时问题，通常稍后自动恢复；若持续，请检查网络或接口。" %
+                (_fmt_ts(last_ok), e))
+            log.error("抓取持续失败，已发邮件通知：%s", e)
+        else:
+            log.warning("本次抓取失败（瞬时，未发邮件，下次运行重试）：%s", e)
+        raise SystemExit("抓取失败，退出。")
+    else:
+        h["last_success"] = now
 
     h["history"], last24, avg_day = compute(h["history"], bal)
     save_history(h)
     kwh = f" | 约 {last24/PRICE_PER_KWH:.2f} 度" if PRICE_PER_KWH > 0 else ""
-    print(f"当前余额 ¥{bal:.2f} | 近24h ¥{last24:.2f}{kwh} | 日均 ¥{avg_day:.2f}")
+    log.info("当前余额 ¥%.2f | 近24h ¥%.2f%s | 日均 ¥%.2f", bal, last24, kwh, avg_day)
 
     # 低余额预警（每次）
     if bal <= THRESHOLD:
@@ -688,6 +801,7 @@ def main():
         body = (f"低于预警线 {THRESHOLD:.0f} 元，该充值了！\n"
                 f"近24h用电 ¥{last24:.2f}，日均约 ¥{avg_day:.2f}。")
         push_email_text(title, body)
+        log.info("低余额预警已发送")
 
     # 异常用电检测（积累足够数据后）
     is_anom, info = detect_anomaly(h["history"])
@@ -700,7 +814,7 @@ def main():
         push_email_text(title, body)
         h["last_anomaly"] = now
         save_history(h)
-        print("检测到异常用电，已发送提醒邮件")
+        log.info("检测到异常用电，已发送提醒邮件")
 
     # 周报 / 月报：按周期生成对应版本的趋势图作为邮件附件
     history = h["history"]
@@ -717,9 +831,10 @@ def main():
                        wk_chart, _read_qr())
         h["last_report"] = now
         save_history(h)
-        print("已推送周报（近一周·手机版趋势图）")
+        log.info("已推送周报（近一周·手机版趋势图）")
     else:
-        print(f"数据积累中（已满 {data_span/86400:.1f} 天 / 周报需 {REPORT_CYCLE_DAYS} 天），暂不发送周报")
+        log.info("数据积累中（已满 %.1f 天 / 周报需 %d 天），暂不发送周报",
+                 data_span/86400, REPORT_CYCLE_DAYS)
 
     # 月报：每 30 天，发送「近30天·桌面横版」趋势图（须先积累满 30 天数据）
     monthly_due = (data_span >= MONTHLY_CYCLE_DAYS * 86400
@@ -732,12 +847,13 @@ def main():
                        mo_chart, _read_qr())
         h["last_monthly"] = now
         save_history(h)
-        print("已推送月报（近30天·桌面横版趋势图）")
+        log.info("已推送月报（近30天·桌面横版趋势图）")
 
     # 本地默认图表（手机版·近30天）+ 网页报告 + 二维码，放最后刷新，确保 chart.png 始终是默认版
     chart_png = gen_chart(h["history"])
     gen_report(h["history"], chart_png)
     gen_qr(SHARE_URL)
+    log.info("=== 运行结束 ===")
 
 if __name__ == "__main__":
     main()
