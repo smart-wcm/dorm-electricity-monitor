@@ -128,7 +128,7 @@ cp .env.example .env
 
 ```ini
 # 本地配置（含凭证），已被 .gitignore 排除，严禁提交
-XJTU_CEMS_JWT=eyJhbGci...你的完整JWT    # 必填：抓包得到的 Cookie（有效期 30 天，到期需重新抓）
+XJTU_CEMS_JWT=eyJhbGci...你的完整JWT    # 必填：抓包得到的 Cookie（有效期 30 天，到期需重新抓；详细步骤见 [抓包指南](抓包指南.md)）
 XJTU_ROOM_ID=2899                        # 你的房间号（不等于真实房间号，需要查看抓包信息）
 XJTU_RECIPIENT=you@example.com            # 必填：收件邮箱
 XJTU_SHARE_URL=                          # 可选：网页报告公网链接
