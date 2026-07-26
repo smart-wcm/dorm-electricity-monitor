@@ -101,6 +101,10 @@ ANOMALY_MULTIPLE = 3.0    # 最新段日耗电 >= 基线(中位数)的 N 倍 视
 ANOMALY_MIN_USAGE = 5.0   # 单次消耗低于此值(元)不报异常，避免小波动误报
 ANOMALY_COOLDOWN_DAYS = 1 # 异常邮件最短间隔(天)，避免连续轰炸
 
+# 登录凭证（JWT）过期检测：主动解析 exp 提前预警 + 抓取失败兜底邮件
+JWT_WARN_DAYS = 3          # 凭证剩余 <= N 天 时发「即将过期」提醒邮件
+JWT_WARN_COOLDOWN_DAYS = 1 # 「即将过期」提醒最短间隔(天)，避免每天轰炸
+
 # ===================== 3. 文件/产物 =====================
 STORE = "dorm_balance.json"        # 历史永久存档
 CHART_PNG = "chart.png"            # 趋势图
@@ -114,11 +118,61 @@ SHARE_URL = (_LOCAL_ENV.get("XJTU_SHARE_URL")
              or "")
 
 # ===================== 4. 取余额 =====================
+class AuthExpired(Exception):
+    """登录凭证失效：JWT 过期 / 被服务器拒绝 / 接口返回未登录。"""
+    pass
+
+
+def _fmt_ts(ts):
+    """时间戳 -> 本地可读时间字符串。"""
+    if not ts:
+        return "未知时间"
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+
+def jwt_exp_info(token):
+    """解析 JWT 的 exp 字段。返回 (exp时间戳, 剩余天数, 是否已过期, 是否可解析)。
+    非标准 JWT（无法解析）返回 (None, None, False, False)；可解析但无 exp 返回 (None, None, False, True)。"""
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return (None, None, False, False)
+        payload_b64 = parts[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = payload.get("exp")
+        if exp is None:
+            return (None, None, False, True)
+        if exp > 1e12:           # 兼容毫秒级 exp
+            exp = exp / 1000.0
+        now = int(time.time())
+        days_left = (exp - now) / 86400.0
+        return (exp, days_left, days_left <= 0, True)
+    except Exception:
+        return (None, None, False, False)
+
+
 def fetch_balance():
-    r = requests.get(API_URL, headers=HEADERS, timeout=15)
+    """抓取余额。鉴权失败抛 AuthExpired；其他网络/业务错误抛常规异常。"""
+    try:
+        r = requests.get(API_URL, headers=HEADERS, timeout=15)
+    except requests.RequestException as e:
+        raise RuntimeError(f"网络请求异常: {e}")
+    if r.status_code in (401, 403):
+        raise AuthExpired(f"HTTP {r.status_code}")
     r.raise_for_status()
-    data = r.json()
-    if data.get("code") != 0:
+    try:
+        data = r.json()
+    except ValueError:
+        raise ValueError(f"接口返回非 JSON: {r.text[:200]}")
+    code = data.get("code")
+    if code != 0:
+        msg = str(data.get("msg", "")).lower()
+        # 接口显式返回未登录/过期类信息，判定为凭证失效
+        if (any(k in msg for k in ("login", "unauthorized", "expired", "token",
+                                   "未登录", "登录", "授权", "过期", "失效"))
+                or code in (401, 403, -1)):
+            raise AuthExpired(f"接口返回未登录(code={code}, msg={data.get('msg')})")
         raise ValueError(f"接口返回异常: {data}")
     return float(data["data"])
 
@@ -581,9 +635,48 @@ def main():
     if not RECIPIENT:
         raise SystemExit(
             "❌ 未配置 XJTU_RECIPIENT：请在 .env 中填写接收通知的邮箱（XJTU_RECIPIENT=you@example.com）。")
-    bal = fetch_balance()
-    h = load_history()
     now = int(time.time())
+    h = load_history()
+
+    # ===== 凭证过期主动检测（解析 JWT 的 exp 字段）=====
+    # 提前 N 天发「即将过期」提醒；已过期则立即发「失效」提醒，避免监控静默中断
+    exp_ts, days_left, expired, parseable = jwt_exp_info(JWT_COOKIE)
+    if parseable:
+        if expired:
+            push_email_text(
+                "⚠️ 监控已停止：电费查询凭证已过期",
+                "你抓包得到的登录凭证（JWT）已于 %s 过期，脚本已无法继续查询余额，监控暂停。\n"
+                "请重新抓包，把新的 JWT 填入 .env 的 XJTU_CEMS_JWT 后重跑即可恢复。\n"
+                "重新抓包步骤见 README「六、安装与配置」一节。" % _fmt_ts(exp_ts))
+            print("凭证已过期，已发邮件通知")
+        elif days_left is not None and days_left <= JWT_WARN_DAYS:
+            if now - h.get("last_jwt_warn", 0) >= JWT_WARN_COOLDOWN_DAYS * 86400:
+                push_email_text(
+                    "⚠️ 电费查询凭证将在 %d 天后过期，请提前重新抓包" % int(days_left),
+                    "你的登录凭证将于 %s 过期（还剩约 %d 天）。\n"
+                    "建议提前重新抓包并更新 .env 的 XJTU_CEMS_JWT，避免监控突然中断。" %
+                    (_fmt_ts(exp_ts), int(days_left)))
+                h["last_jwt_warn"] = now
+                save_history(h)
+                print("凭证即将过期，已发提醒邮件")
+
+    # ===== 抓取余额（失败兜底：区分「凭证失效」与「其他错误」）=====
+    try:
+        bal = fetch_balance()
+    except AuthExpired as e:
+        push_email_text(
+            "⚠️ 监控已停止：电费凭证被服务器拒绝",
+            "查询电费接口返回鉴权失败（%s）。\n"
+            "凭证很可能已过期或失效，请重新抓包并更新 .env 的 XJTU_CEMS_JWT。\n"
+            "本次未记录新数据；修复后下次运行即恢复正常。" % e)
+        raise SystemExit("凭证失效，已发邮件通知，退出。")
+    except Exception as e:
+        push_email_text(
+            "⚠️ 电费抓取失败（非凭证问题）",
+            "本次查询接口出错：%s\n"
+            "可能是网络波动或服务器维护，下次运行会重试；若持续失败请检查网络/接口。" % e)
+        raise SystemExit("抓取失败，已发邮件通知，退出。")
+
     h["history"], last24, avg_day = compute(h["history"], bal)
     save_history(h)
     kwh = f" | 约 {last24/PRICE_PER_KWH:.2f} 度" if PRICE_PER_KWH > 0 else ""
