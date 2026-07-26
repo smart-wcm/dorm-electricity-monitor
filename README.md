@@ -197,23 +197,31 @@ Register-ScheduledTask -TaskName "宿舍电费监控" -Action $action -Trigger $
 
 ## 八、文件结构
 
+本项目已整理在 `dorm-electricity-monitor/` 文件夹中，克隆仓库后该目录即项目根。
+
 ```
-dorm-electricity-monitor/
-├── dorm_elec_auto.py        # 核心脚本（采集+计算+检测+绘图+推送+报告）
-├── dorm-electricity-tracker.html  # 手动版单文件网页工具（记录+图表+预警，本地存储）
-├── setup.py                 # 一键交互式配置（生成 .env）
-├── run_dorm.bat             # Windows 定时任务启动器（自动定位到脚本目录）
-├── dorm_balance.json        # 历史存档（本地，gitignore）
-├── chart.png / qr.png       # 生成的趋势图 / 二维码（本地，gitignore）
-├── deploy/
-│   └── index.html           # 自包含网页报告（内嵌图+二维码）
+dorm-electricity-monitor/          # 项目根目录（git 仓库根）
+├── dorm_elec_auto.py        # 核心脚本：采集+计算+JWT过期检测+绘图+邮件推送+报告生成
+├── dorm-electricity-tracker.html  # 手动版单文件网页工具（本地存储，免后端）
+├── setup.py                 # 一键交互式配置 → 生成 .env
+├── run_dorm.bat             # Windows 任务计划启动器（自动定位脚本目录）
 ├── .env.example             # 配置模板（复制为 .env 后填写）
 ├── .gitignore
 ├── LICENSE                  # MIT 许可证
+├── README.md
 ├── assets/
 │   └── preview.png          # README 效果示意图
-└── README.md
+├── deploy/
+│   └── index.html           # 自包含网页报告（内嵌趋势图+二维码）
+├── .env                     # 【本地生成，gitignore】真实凭证，切勿提交
+├── .venv/                   # 【本地生成，gitignore】Python 虚拟环境
+├── dorm_balance.json        # 【本地生成，gitignore】历史存档
+├── chart.png                # 【本地生成，gitignore】趋势图
+├── qr.png                   # 【本地生成，gitignore】二维码
+└── __pycache__/             # 【本地生成，gitignore】Python 缓存
 ```
+
+> 标注 **【gitignore】** 的文件由 `.gitignore` 排除，不会进入版本库；其余文件均已提交。
 
 ---
 
