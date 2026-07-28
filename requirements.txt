@@ -1,0 +1,7 @@
+# 运行 dorm_elec_auto.py 所需的第三方依赖（与脚本顶部 PEP 723 声明一致）。
+# 适用于未使用 uv / PEP 723 运行器的环境：
+#   pip install -r requirements.txt
+requests
+matplotlib
+qrcode[pil]
+numpy

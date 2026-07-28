@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""一键配置 / 续期工具。
+"""一键配置工具。
 
 首次配置：
     python setup.py
-日常续期 JWT（只改凭证，其他不动，更快）：
-    python update_jwt.py
 
 说明：
 - setup.py 重跑时会以现有 .env 的值为默认，直接回车即保留，
   不必重新填写所有信息。
+- 该接口在校园网内仅凭 roomId 即可取数，无需任何登录凭证（JWT）。
 - 更新的 .env 与脚本同目录。
 """
 import os
@@ -45,7 +44,6 @@ def ask(prompt, default=""):
 def detect_agently():
     """探测 agently-cli 的常见安装位置。"""
     candidates = [
-        r"D:\AI\node\global\agently-cli.cmd",
         os.path.expanduser(r"~\AppData\Roaming\npm\agently-cli.cmd"),
         os.path.expanduser(r"~\AppData\Local\npm\agently-cli.cmd"),
     ]
@@ -71,22 +69,18 @@ def main():
     print("=" * 50)
     print("直接回车 = 保留当前 .env 里的对应值；想改哪条就填哪条。\n")
 
-    jwt = ask("1) 登录 JWT（ProxyPin 抓包得到的 Cookie）", old.get("XJTU_CEMS_JWT", ""))
-    if not jwt:
-        print("\n⚠️ 当前没有可用 JWT，请先抓包获取后重新运行。")
-        sys.exit(1)
+    room = ask("1) 宿舍房间号 roomId（ProxyPin 抓包请求 URL 里的 roomId 参数）",
+               old.get("XJTU_ROOM_ID", "2899"))
 
-    room = ask("2) 宿舍房间号 roomId", old.get("XJTU_ROOM_ID", "2899"))
-
-    recipient = ask("3) 收件邮箱（接收预警/周报/月报）", old.get("XJTU_RECIPIENT", ""))
+    recipient = ask("2) 收件邮箱（接收预警/周报/月报）", old.get("XJTU_RECIPIENT", ""))
     if not recipient:
         print("\n⚠️ 收件邮箱不能为空。")
         sys.exit(1)
 
-    share = ask("4) 网页报告公网链接（CloudStudio 部署后获得，可留空）",
+    share = ask("3) 网页报告公网链接（CloudStudio 部署后获得，可留空）",
                 old.get("XJTU_SHARE_URL", ""))
 
-    agently = ask("5) agently-cli 绝对路径（回车自动探测）", old.get("AGENTLY_BIN", ""))
+    agently = ask("4) agently-cli 绝对路径（回车自动探测）", old.get("AGENTLY_BIN", ""))
     if not agently:
         agently = detect_agently()
         if agently:
@@ -96,8 +90,7 @@ def main():
                   "`agently-cli auth login` 授权，稍后在 .env 手动补 AGENTLY_BIN。")
 
     content = (
-        "# 本地配置（含凭证），已被 .gitignore 排除，严禁提交\n"
-        f"XJTU_CEMS_JWT={jwt}\n"
+        "# 本地配置，已被 .gitignore 排除，严禁提交\n"
         f"XJTU_ROOM_ID={room}\n"
         f"XJTU_RECIPIENT={recipient}\n"
         f"XJTU_SHARE_URL={share}\n"
@@ -107,8 +100,7 @@ def main():
         f.write(content)
 
     print(f"\n✅ 配置已写入：{ENV_PATH}")
-    print("下一步：运行 `python dorm_elec_auto.py` 测试一次；")
-    print("       仅更新 JWT 可用更快的 `python update_jwt.py`。")
+    print("下一步：运行 `python dorm_elec_auto.py` 测试一次。")
 
 
 if __name__ == "__main__":

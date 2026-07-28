@@ -1,58 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""核心纯函数单元测试：jwt_exp_info / compute / detect_anomaly。
+"""核心纯函数单元测试：compute / detect_anomaly。
 
 运行：
     .venv/Scripts/python.exe test_core.py
 """
-import base64
-import json
 import time
 import unittest
 
 import dorm_elec_auto as m
-
-
-def _make_jwt(exp, iat=None, include_exp=True):
-    if iat is None:
-        iat = exp - 30 * 86400
-    payload = {"iat": iat}
-    if include_exp:
-        payload["exp"] = exp
-    raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    raw = raw.rstrip("=")
-    return f"header.{raw}.sig"
-
-
-class TestJwtExpInfo(unittest.TestCase):
-    def test_expired(self):
-        exp = int(time.time()) - 100
-        e, d, ex, p = m.jwt_exp_info(_make_jwt(exp))
-        self.assertTrue(p)
-        self.assertTrue(ex)
-        self.assertIsNotNone(e)
-
-    def test_valid(self):
-        exp = int(time.time()) + 86400
-        e, d, ex, p = m.jwt_exp_info(_make_jwt(exp))
-        self.assertTrue(p)
-        self.assertFalse(ex)
-        self.assertGreater(d, 0)
-
-    def test_non_jwt(self):
-        self.assertEqual(m.jwt_exp_info("not-a-jwt"), (None, None, False, False))
-
-    def test_ms_exp(self):
-        exp = (int(time.time()) + 86400) * 1000
-        e, d, ex, p = m.jwt_exp_info(_make_jwt(exp))
-        self.assertTrue(p)
-        self.assertFalse(ex)
-        self.assertGreater(d, 0)
-
-    def test_no_exp(self):
-        e, d, ex, p = m.jwt_exp_info(_make_jwt(0, include_exp=False))
-        self.assertEqual(e, None)
-        self.assertTrue(p)
 
 
 class TestCompute(unittest.TestCase):
@@ -103,6 +59,29 @@ class TestDetectAnomaly(unittest.TestCase):
         is_anom, info = m.detect_anomaly(hist)
         self.assertTrue(is_anom)
         self.assertIn("last_usage", info)
+
+
+class TestSaveHistory(unittest.TestCase):
+    def test_atomic_roundtrip(self):
+        import json
+        import tempfile
+        import os
+        d = tempfile.mkdtemp()
+        orig_store = m.STORE
+        try:
+            m.STORE = os.path.join(d, "dorm_balance.json")
+            payload = {"history": [{"t": 1, "b": 9.9}], "marker": "atomic-ok"}
+            m.save_history(payload)
+            # 文件应完整可解析，且内容与写入一致（无半截 JSON）
+            with open(m.STORE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            self.assertEqual(loaded["marker"], "atomic-ok")
+            self.assertEqual(loaded["history"][0]["b"], 9.9)
+        finally:
+            m.STORE = orig_store
+            for fn in os.listdir(d):
+                os.remove(os.path.join(d, fn))
+            os.rmdir(d)
 
 
 if __name__ == "__main__":

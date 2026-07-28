@@ -13,11 +13,11 @@
 - 📉 自动**反推用电量**（近 24 小时 / 日均）
 - 📧 **低余额预警**（低于阈值发邮件）
 - ⚡ **异常用电检测**（用电量骤增时提醒，防忘关电器 / 故障 / 漏电）
-- 🔐 **登录凭证过期检测**（自动解析 JWT 过期时间；失效或即将过期时自动发邮件提醒你重新抓包）
+- 🔐 **无需登录凭证**：接口在校园网内仅凭 `roomId` 即可取数，无需抓包 JWT、无需任何 Cookie
 - 📊 **双周期报告**：每周发「近一周·手机版」趋势图，每月发「近 30 天·桌面版」趋势图
 - 🌐 生成**网页报告 + 二维码**，手机扫码随时看
 
-> 本仓库为通用模板，**核心配置（房间号、登录凭证）需自行填充**，详见下文「安装与配置」。
+> 本仓库为通用模板，**核心配置（房间号）需自行填充**，详见下文「安装与配置」。
 
 ---
 
@@ -41,7 +41,7 @@
 
 ```mermaid
 flowchart LR
-    A[学校 cems 接口\nGET electricity?roomId=xxx] -->|HTTPS + JWT Cookie| B(dorm_elec_auto.py\n每6h运行)
+    A[学校 cems 接口\nGET electricity?roomId=xxx] -->|校园网 HTTPS| B(dorm_elec_auto.py\n每6h运行)
     B --> C[(dorm_balance.json\n本地存档)]
     B --> D{判定}
     D -->|余额≤阈值| E[邮件: 低余额预警]
@@ -86,7 +86,7 @@ flowchart LR
 ### 第 0 步：抓包获取配置参数
 
 [抓包指南](抓包指南.md)
-获得参数：JWT/roomID
+获得参数：**roomId**（接口仅需在校园网内 + roomId 即可取数，**无需 JWT / 登录凭证**）
 
 ### 第 1 步：装好运行环境
 
@@ -121,22 +121,19 @@ pip install requests matplotlib "qrcode[pil]"
 python setup.py
 ```
 
-按提示回答几个问题（JWT、房间号、收件邮箱等），脚本自动生成 `.env`，**不用手动改任何文件**。
-
-> 💡 **日常续期 JWT 更快**：凭证每 30 天到期，到期只需重抓包后跑 `python update_jwt.py` 粘贴新 JWT 即可——它**只改 `.env` 里的 JWT 一行，其他配置（房间号、收件邮箱等）原样保留**，不必重跑本脚本重填所有信息。
+按提示回答几个问题（房间号、收件邮箱等），脚本自动生成 `.env`，**不用手动改任何文件**。
 
 <details>
 <summary>备选：手动配置（不想跑脚本时用）</summary>
 
 ```bash
 cp .env.example .env
-# 用记事本打开 .env，填下面 5 个字段：
+# 用记事本打开 .env，填下面 4 个字段：
 ```
 
 ```ini
-# 本地配置（含凭证），已被 .gitignore 排除，严禁提交
-XJTU_CEMS_JWT=eyJhbGci...你的完整JWT    # 必填：抓包得到的 Cookie（有效期 30 天，到期需重新抓；详细步骤见 [抓包指南](抓包指南.md)）
-XJTU_ROOM_ID=××××                        # 你的房间号（不等于真实房间号，需要查看抓包信息）
+# 本地配置，已被 .gitignore 排除，严禁提交
+XJTU_ROOM_ID=××××                        # 你的房间号（ProxyPin 抓包请求 URL 里的 roomId 参数）
 XJTU_RECIPIENT=you@example.com            # 必填：收件邮箱
 XJTU_SHARE_URL=                          # 可选：网页报告公网链接
 AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
@@ -149,9 +146,7 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 - **发件人 = 你自己的「智能体邮箱」**：第 2 步 `agently-cli auth login` 授权后自动确定（形如 `xxx@agent.qq.com`）。
 - **收件人 = `XJTU_RECIPIENT`**：填你平时看邮件的邮箱（可以是同一个智能体邮箱自收发，也可以是常用 QQ/163 邮箱）。不填脚本会直接报错退出。
 
-> ⚠️ **绝不要把真实 JWT 写进代码或提交到 Git**（JWT 内含学号、姓名）。本项目已从代码中移除硬编码凭证，统一由 `.env` 读取，`.env` 放在脚本同目录即可，**无需设置系统环境变量**。
-
-> ⏳ **凭证有 30 天有效期**：经解析，电费系统签发的 JWT 固定 **30 天**后过期（到期监控会自动停止）。脚本每次运行会检查过期时间，并在**到期前 3 天发邮件提醒你重新抓取**（提前天数见配置 `JWT_WARN_DAYS`）；若已过期或被服务器拒绝，也会立即发邮件通知。重新抓到后，只改 `.env` 里的 `XJTU_CEMS_JWT` 一行、重跑即可，无需动代码。
+> ⚠️ **本配置不含任何登录凭证**：接口在校园网内仅凭 `roomId` 即可取数，无需 JWT / Cookie。请照常**不要把 `.env` 提交到公开仓库**（虽无凭证，但含你的房间号与邮箱）。`.env` 放在脚本同目录即可，**无需设置系统环境变量**。
 
 ### 全部可自定义配置项一览
 
@@ -159,8 +154,7 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 
 | 变量 | 是否必须 | 含义 |
 |------|---------|------|
-| `XJTU_CEMS_JWT` | ✅ 必填 | 抓包得到的登录 JWT（含学号姓名，勿随意泄露） |
-| `XJTU_ROOM_ID` | ✅ 必填 | 宿舍房间号（roomId） |
+| `XJTU_ROOM_ID` | ✅ 必填 | 宿舍房间号（roomId，校园网内取数唯一所需参数） |
 | `XJTU_RECIPIENT` | ✅ 必填 | 收件邮箱，接收所有通知与报告 |
 | `XJTU_SHARE_URL` | 可选 | 网页报告公网链接；填了二维码才有效 |
 | `AGENTLY_BIN` | 可选（自动探测） | `agently-cli` 绝对路径；探测失败时需手填 |
@@ -181,8 +175,6 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 | `ANOMALY_MIN_USAGE` | `5.0` | 单次消耗低于此值不报异常（元） |
 | `ANOMALY_COOLDOWN_DAYS` | `1` | 异常邮件最短间隔（天） |
 | `RECHARGE_CAP_MULT` | `2.0` | 充值柱高度封顶倍数（相对日用电最大值）；调大=充值柱更高，调小=更紧凑 |
-| `JWT_WARN_DAYS` | `3` | 凭证剩余 ≤ N 天时发「即将过期」提醒邮件；设为 0 可关闭提前预警 |
-| `JWT_WARN_COOLDOWN_DAYS` | `1` | 「即将过期」提醒最短间隔（天），避免每天轰炸 |
 
 ---
 
@@ -210,17 +202,15 @@ Register-ScheduledTask -TaskName "宿舍电费监控" -Action $action -Trigger $
 
 ```
 dorm-electricity-monitor/          # 项目根目录（git 仓库根）
-├── dorm_elec_auto.py        # 核心脚本：采集+计算+JWT过期检测+绘图+邮件推送+报告生成
-├── dorm-electricity-tracker.html  # 手动版单文件网页工具（本地存储，免后端）
+├── dorm_elec_auto.py        # 核心脚本：采集+计算+绘图+邮件推送+报告生成
 ├── setup.py                 # 一键交互式配置 → 生成 .env（重跑保留已有值）
-├── update_jwt.py            # 凭证续期专用：只更新 JWT 一行，其他配置不动
-├── test_core.py            # 单元测试（JWT解析/用量计算/异常检测）
+├── test_core.py            # 单元测试（用量计算/异常检测）
 ├── run_dorm.bat             # Windows 任务计划启动器（自动定位脚本目录）
 ├── .env.example             # 配置模板（复制为 .env 后填写）
 ├── .gitignore
 ├── LICENSE                  # MIT 许可证
 ├── README.md
-├── 抓包指南.md            # 抓包获取 JWT 凭证图文教程
+├── 抓包指南.md            # 抓包获取 roomId 图文教程（无需 JWT）
 ├── assets/
 │   └── preview.png          # README 效果示意图
 ├── deploy/                 # 【运行生成，gitignore】网页报告目录（脚本生成 index.html）
@@ -234,6 +224,8 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 ```
 
 > 标注 **【gitignore】** 的文件由 `.gitignore` 排除，不会进入版本库；其余文件均已提交。
+
+> **网页报告**：`deploy/index.html` 是由 `dorm_elec_auto.py` 每次运行生成的**自动监控报告**（内嵌趋势图 + 二维码），可部署到公网后扫码查看。它是脚本产物，无需手动维护。
 
 ---
 
@@ -250,8 +242,8 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 - [x] 充值柱高度封顶（避免充值金额拉爆纵轴，真实金额以标注显示）
 - [x] 网页报告 + 二维码（CloudStudio 部署）
 - [x] Agent Mail 免费推送渠道
-- [x] 登录凭证过期检测（主动解析 JWT exp 提前预警 + 抓取失败兜底邮件提醒）
-- [x] 凭证安全外置（环境变量 / `.env`，去除硬编码）
+- [x] 免登录凭证取数（校园网内仅凭 roomId 即可，无需抓包 JWT）
+- [x] 凭证安全外置（环境变量 / `.env`，去除硬编码；本项目本就无需凭证）
 - [x] 抓取重试 + 指数退避（瞬时失败不误发告警邮件，仅持续失败才提醒）
 - [x] 运行日志 `dorm_monitor.log`（按大小滚动，排障用）
 - [x] 调试参数 `--dry-run` / `--test-email`（验证配置与邮件通道）
@@ -259,7 +251,7 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 
 
 因为是小白，对代码的理解仅限于本科学过的大计基和C++以及计算机二级hh
-这是我在workbuddy的帮助下vibecoding几个小时的产物
+这是我在workbuddy的帮助下vibecoding的产物
 肯定存在可以优化的地方
 欢迎大佬一起完善 👏
 
@@ -273,7 +265,7 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 
 # ⚠️ 必须用本项目 .venv 运行（不要用 anaconda 等其它 Python：
 #    其它环境的 matplotlib 在生成图表时可能原生崩溃 segfault）。
-.venv\Scripts\python.exe dorm_elec_auto.py --dry-run      # 0) 校验配置+解析JWT+预览将做什么
+.venv\Scripts\python.exe dorm_elec_auto.py --dry-run      # 0) 校验配置+预览将做什么
 .venv\Scripts\python.exe dorm_elec_auto.py --test-email   # 1) 发测试邮件，确认通道正常
 .venv\Scripts\python.exe dorm_elec_auto.py                # 2) 正常运行一次
 ```
@@ -281,7 +273,7 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 - **运行日志**：每次运行写入 `dorm_monitor.log`（按大小滚动，保留最近 3 份），含时间戳、步骤与错误原因，排障时优先查看。
 - **瞬时失败不误报**：网络抖动等瞬时错误会自动重试（3 次，指数退避），且**不会**发告警邮件；仅当抓取连续失败超过 24 小时才会发「持续异常」邮件，避免误报。
 - **启动即校验**：房间号须为正整数、`agently-cli` 路径须存在，配置错误会立即给出清晰报错退出。
-- **单元测试**：核心纯函数（JWT 解析 / 用量计算 / 异常检测）有 `test_core.py` 覆盖，改代码前可先跑一遍防回归：
+- **单元测试**：核心纯函数（用量计算 / 异常检测）有 `test_core.py` 覆盖，改代码前可先跑一遍防回归：
   ```bash
   .venv\Scripts\python.exe test_core.py
   ```
@@ -290,8 +282,8 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 
 ## 十、安全与隐私
 
-- 本项目涉及你的校园网登录 JWT（含学号、姓名等个人信息）。**请勿将真实 JWT 提交到任何公开仓库**。
-- 本项目已通过「环境变量 / `.env`（gitignore 排除）」方式管理凭证，代码中不再包含任何真实凭证。
+- 本项目**无需任何登录凭证**：cems 接口在校园网内仅凭 `roomId` 即可取数，代码与配置中均不含 JWT / 账号密码等敏感信息。
+- 尽管如此，仍建议**不要把 `.env` 提交到任何公开仓库**（其中含你的房间号与收件邮箱）。本项目已通过「`.env`（gitignore 排除）」方式管理配置。
 - 数据仅保存在你本地 `dorm_balance.json`，不上传任何第三方服务器（除你主动配置的邮件收件人与部署平台）。
 - 请遵守学校网络使用规范，勿高频请求接口（默认 6h 一次，已足够温和）。
 

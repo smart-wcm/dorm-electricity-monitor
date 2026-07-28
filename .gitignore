@@ -29,6 +29,7 @@ dorm_monitor.log
 
 # ===== WorkBuddy 内部数据（项目记忆/工具状态，非源码，勿提交） =====
 .workbuddy/
+.claude
 
 # ===== 临时预览 / 测试文件（本项目开发期产生） =====
 _chart_*.py
@@ -36,6 +37,7 @@ _preview_*.py
 preview_*.png
 _verify.py
 *_preview.py
+宿舍电费监控项目分析报告.md
 
 # ===== 系统 =====
 .DS_Store

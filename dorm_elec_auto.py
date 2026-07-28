@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.8"
-# dependencies = ["requests", "matplotlib", "qrcode[pil]"]
+# dependencies = ["requests", "matplotlib", "qrcode[pil]", "numpy"]
 # ///
 # -*- coding: utf-8 -*-
 """
@@ -14,7 +14,7 @@
 通知渠道：Agent Mail CLI（agently-cli），以智能体邮箱身份发信；
           须先 `agently-cli auth login` 完成 OAuth 授权。
 
-接口（已抓包确认）：
+接口（校园网内可直接访问，无需登录凭证）：
   GET https://ssn.xjtu.edu.cn/cems/mobile/meterAccount/electricity?roomId=2899
   响应: {"code":0,"data":36.58,"msg":"操作成功"}   # data 即余额(元)
 
@@ -36,6 +36,7 @@ import io
 import logging
 import logging.handlers
 import argparse
+import atexit
 
 # ===================== 1. 配置区 =====================
 def _load_dotenv(path=None):
@@ -66,16 +67,11 @@ _LOCAL_ENV = _load_dotenv()
 ROOM_ID = _LOCAL_ENV.get("XJTU_ROOM_ID") or os.environ.get("XJTU_ROOM_ID") or "2899"
 API_URL = f"https://ssn.xjtu.edu.cn/cems/mobile/meterAccount/electricity?roomId={ROOM_ID}"
 
-# 登录凭证改为环境变量 / .env 读取，代码中不再硬编码（安全开源，防泄露学号姓名）
-# 优先级：本地 .env（与脚本同目录） > 系统环境变量 > 空。改 .env 即可生效，无需动系统变量。
-JWT_COOKIE = (_LOCAL_ENV.get("XJTU_CEMS_JWT")
-              or os.environ.get("XJTU_CEMS_JWT")
-              or "")
-
+# 鉴权说明：该 cems 接口在校园网环境下仅凭 roomId 即可返回余额，无需任何登录凭证（JWT）。
+# 只要本机处于西安交大校园网（或能访问 ssn.xjtu.edu.cn 的内网）即可，无需抓包获取 Cookie。
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Mobile",
     "Accept": "application/json, text/plain, */*",
-    "Cookie": JWT_COOKIE,
 }
 
 # ===================== 2. 通知配置（Agent Mail） =====================
@@ -86,12 +82,13 @@ HEADERS = {
 RECIPIENT = (_LOCAL_ENV.get("XJTU_RECIPIENT")
              or os.environ.get("XJTU_RECIPIENT")
              or "")
-# agently-cli 可执行文件完整路径（各机器不同，建议设为环境变量 AGENTLY_BIN 或写进 .env）。
-# 若任务计划报“找不到命令”，填绝对路径，例如：
+# agently-cli 可执行文件完整路径（各机器不同）。
+# 默认空串 —— 必须在 .env 或环境变量 AGENTLY_BIN 中显式提供，否则启动会明确报错退出，
+# 避免在不同机器 / 路径变动时静默用错路径。例如：
 #   AGENTLY_BIN = r"C:\Users\你的用户名\AppData\Roaming\npm\agently-cli.cmd"
 AGENTLY_BIN = (_LOCAL_ENV.get("AGENTLY_BIN")
                or os.environ.get("AGENTLY_BIN")
-               or r"D:\AI\node\global\agently-cli.cmd")
+               or "")
 THRESHOLD = 10.0          # 低余额预警线（元）；想改阈值就改这一行
 PRICE_PER_KWH = 0.0       # 电价(元/度)，填了会把金额折算成“度”；不知道就留 0
 REPORT_CYCLE_DAYS = 7     # 每隔几天生成并推送一次「近一周·手机版」周报
@@ -104,9 +101,6 @@ ANOMALY_MULTIPLE = 3.0    # 最新段日耗电 >= 基线(中位数)的 N 倍 视
 ANOMALY_MIN_USAGE = 5.0   # 单次消耗低于此值(元)不报异常，避免小波动误报
 ANOMALY_COOLDOWN_DAYS = 1 # 异常邮件最短间隔(天)，避免连续轰炸
 
-# 登录凭证（JWT）过期检测：主动解析 exp 提前预警 + 抓取失败兜底邮件
-JWT_WARN_DAYS = 3          # 凭证剩余 <= N 天 时发「即将过期」提醒邮件
-JWT_WARN_COOLDOWN_DAYS = 1 # 「即将过期」提醒最短间隔(天)，避免每天轰炸
 FAIL_ALERT_HOURS = 24      # 抓取连续失败超此时长(小时)才发「持续异常」邮件；瞬时失败仅记日志，避免误报
 
 # ===================== 3. 文件/产物 =====================
@@ -126,7 +120,7 @@ SHARE_URL = (_LOCAL_ENV.get("XJTU_SHARE_URL")
 
 # ===================== 4. 取余额 =====================
 class AuthExpired(Exception):
-    """登录凭证失效：JWT 过期 / 被服务器拒绝 / 接口返回未登录。"""
+    """接口拒绝访问：可能不在校园网 / 接口地址或参数已变更。"""
     pass
 
 
@@ -156,32 +150,10 @@ def setup_logging():
     log.addHandler(ch)
 
 
-def jwt_exp_info(token):
-    """解析 JWT 的 exp 字段。返回 (exp时间戳, 剩余天数, 是否已过期, 是否可解析)。
-    非标准 JWT（无法解析）返回 (None, None, False, False)；可解析但无 exp 返回 (None, None, False, True)。"""
-    try:
-        parts = token.split(".")
-        if len(parts) < 2:
-            return (None, None, False, False)
-        payload_b64 = parts[1]
-        payload_b64 += "=" * (-len(payload_b64) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        exp = payload.get("exp")
-        if exp is None:
-            return (None, None, False, True)
-        if exp > 1e12:           # 兼容毫秒级 exp
-            exp = exp / 1000.0
-        now = int(time.time())
-        days_left = (exp - now) / 86400.0
-        return (exp, days_left, days_left <= 0, True)
-    except Exception:
-        return (None, None, False, False)
-
-
 def fetch_balance(retries=3, backoff=2.0):
     """抓取余额，带重试与指数退避。
 
-    鉴权失败（401/403/未登录）立即抛 AuthExpired（重试无意义）；
+    接口拒绝（401/403）立即抛 AuthExpired（重试无意义）；
     网络/HTTP/JSON 等瞬时错误最多重试 retries 次（退避 2/4/8...秒）。
     """
     last_err = None
@@ -208,13 +180,9 @@ def fetch_balance(retries=3, backoff=2.0):
                 else:
                     code = data.get("code")
                     if code != 0:
-                        msg = str(data.get("msg", "")).lower()
-                        # 接口显式返回未登录/过期类信息，判定为凭证失效
-                        if (any(k in msg for k in ("login", "unauthorized", "expired",
-                                                   "token", "未登录", "登录", "授权",
-                                                   "过期", "失效"))
-                                or code in (401, 403, -1)):
-                            raise AuthExpired(f"接口返回未登录(code={code}, msg={data.get('msg')})")
+                        # 接口拒绝访问（未登录/无权限/参数错误等）判定为访问被拒
+                        if code in (401, 403, -1):
+                            raise AuthExpired(f"接口拒绝访问(code={code}, msg={data.get('msg')})")
                         last_err = ValueError(f"接口返回异常: {data}")
                         log.warning("抓取第%d/%d 次失败(code=%s)", attempt, retries, code)
                     else:
@@ -231,8 +199,80 @@ def load_history():
     return {"history": [], "last_report": 0}
 
 def save_history(h):
-    with open(STORE, "w", encoding="utf-8") as f:
-        json.dump(h, f, ensure_ascii=False, indent=2)
+    """原子写：先落临时文件，再 os.replace 覆盖。
+
+    os.replace 在同一目录内是原子操作，可避免计划任务重叠或写入中途被
+    中断时生成半截 JSON 导致 dorm_balance.json 损坏（旧实现直接覆盖写，
+    多实例并发时有此风险）。临时文件与 STORE 同目录，确保跨文件系统 rename 也成立。
+    """
+    import tempfile
+    d = os.path.dirname(os.path.abspath(STORE))
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".balance_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(h, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, STORE)  # 原子替换
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _acquire_run_lock():
+    """进程互斥锁：避免计划任务重叠时多实例并发读写 / 重复发信。
+
+    与 STORE 同目录原子创建一个 `.dorm_elec.lock` 文件（O_CREAT|O_EXCL 跨平台原子）。
+    - 若锁已存在且较新（< STALE 秒），视为有其它实例正在运行，直接退出本次；
+    - 若锁存在但过旧（>= STALE 秒），视为上次异常残留，删掉强占；
+    - 锁内写入当前 PID 便于排查。
+    返回 (fd, path)；调用方应在进程退出时调用 _release_lock 释放（本脚本用 atexit 兜底）。
+    """
+    lock = os.path.join(os.path.dirname(os.path.abspath(STORE)), ".dorm_elec.lock")
+    STALE = 3600  # 单次运行仅几分钟；锁超过 1 小时认定为残留
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+    except FileExistsError:
+        try:
+            age = time.time() - os.path.getmtime(lock)
+        except OSError:
+            age = 0
+        if age < STALE:
+            raise SystemExit(
+                f"⚠️ 已有实例运行中（锁文件 {lock} 较新），本次跳过以避免并发读写。")
+        # 残留锁，强占
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        except FileExistsError:
+            # 极小竞态：删除后、重建前，另一实例抢先重建了锁
+            raise SystemExit(
+                f"⚠️ 锁文件 {lock} 被其它实例抢先重建，本次跳过以避免并发读写。")
+    try:
+        os.write(fd, str(os.getpid()).encode())
+    except OSError:
+        pass
+    return fd, lock
+
+
+def _release_lock(fd, path):
+    """释放互斥锁（忽略已关闭 / 不存在等异常）。"""
+    if not fd:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        if path:
+            os.remove(path)
+    except OSError:
+        pass
+
 
 def compute(history, balance):
     # 存档：仅保留最近 RETENTION_DAYS 天
@@ -631,10 +671,10 @@ def _send_mail(subject, body_file, attachments):
     return True
 
 def push_email_text(subject, body):
-    """纯文本预警邮件（无附件）。"""
+    """纯文本预警邮件（无附件）。返回是否发送成功。"""
     fd, path = _body_tmp(body)
     try:
-        _send_mail(subject, path, [])
+        return _send_mail(subject, path, [])
     finally:
         _rm_tmp(path)
 
@@ -653,7 +693,7 @@ def push_email_img(subject, html, chart_bytes, qr_bytes=None):
         atts.append(qr_path)
     fd, html_path = _body_tmp(html)
     try:
-        _send_mail(subject, html_path, atts)
+        return _send_mail(subject, html_path, atts)
     finally:
         _rm_tmp(html_path)
         for p in atts:
@@ -684,11 +724,7 @@ def _read_qr():
 
 # ===================== 10. 主流程 =====================
 def validate_config():
-    """启动校验：凭证/收件人必填，房间号须正整数，agently-cli 路径须存在。失败即清晰报错退出。"""
-    if not JWT_COOKIE:
-        raise SystemExit(
-            "❌ 未配置 XJTU_CEMS_JWT：请将 .env.example 复制为 .env 后填写真实 JWT，"
-            "或运行 python update_jwt.py 粘贴新 JWT。")
+    """启动校验：房间号须正整数，收件人/agently-cli 路径须存在。失败即清晰报错退出。"""
     if not RECIPIENT:
         raise SystemExit(
             "❌ 未配置 XJTU_RECIPIENT：请在 .env 中填写接收通知的邮箱"
@@ -710,10 +746,16 @@ def main():
     # ===== 调试参数 =====
     parser = argparse.ArgumentParser(description="宿舍电费自动监控")
     parser.add_argument("--dry-run", action="store_true",
-                        help="只校验配置+解析 JWT 过期时间+打印将做什么，不抓数不发包")
+                        help="只校验配置+打印将做什么，不抓数不发包")
     parser.add_argument("--test-email", action="store_true",
                         help="发送一封测试邮件确认 Agent Mail 通道，然后退出")
     args = parser.parse_args()
+
+    # ===== 进程互斥：避免计划任务重叠并发读写 / 重复发信 =====
+    # 调试模式（dry-run / 测试邮件）为手动单次操作，不加锁直接放行
+    if not (args.dry_run or args.test_email):
+        _lock_fd, _lock_path = _acquire_run_lock()
+        atexit.register(_release_lock, _lock_fd, _lock_path)
 
     # ===== 配置校验（fail-fast）=====
     validate_config()
@@ -732,57 +774,24 @@ def main():
 
     # ===== 调试：dry-run =====
     if args.dry_run:
-        exp_ts, days_left, expired, parseable = jwt_exp_info(JWT_COOKIE)
-        if parseable:
-            exp_str = _fmt_ts(exp_ts)
-            if expired:
-                warn = "（已过期！请重新抓包）"
-            elif days_left is not None and days_left <= JWT_WARN_DAYS:
-                warn = f"（还剩约 {days_left:.1f} 天，将发提醒）"
-            else:
-                warn = f"（还剩约 {days_left:.1f} 天）"
-        else:
-            exp_str, warn = "（无法解析，非标准 JWT）", ""
         print(f"[dry-run] 房间号={ROOM_ID}  收件人={RECIPIENT}")
-        print(f"[dry-run] JWT 过期时间={exp_str} {warn}")
+        print(f"[dry-run] 接口={API_URL}")
         print(f"[dry-run] agently-cli={AGENTLY_BIN}  存在={'是' if os.path.exists(AGENTLY_BIN) else '否'}")
         print(f"[dry-run] 历史记录 {len(h['history'])} 条；将执行：抓取余额→存档→"
               f"(低余额/异常/周报/月报)判定→生成图表与网页报告")
         print("[dry-run] 未抓取、未发送任何邮件。")
         return
 
-    # ===== 凭证过期主动检测（解析 JWT 的 exp 字段）=====
-    # 提前 N 天发「即将过期」提醒；已过期则立即发「失效」提醒，避免监控静默中断
-    exp_ts, days_left, expired, parseable = jwt_exp_info(JWT_COOKIE)
-    if parseable:
-        if expired:
-            push_email_text(
-                "⚠️ 监控已停止：电费查询凭证已过期",
-                "你抓包得到的登录凭证（JWT）已于 %s 过期，脚本已无法继续查询余额，监控暂停。\n"
-                "请重新抓包，把新的 JWT 填入 .env 的 XJTU_CEMS_JWT 后重跑即可恢复。\n"
-                "重新抓包步骤见 README「六、安装与配置」一节。" % _fmt_ts(exp_ts))
-            log.info("凭证已过期，已发邮件通知")
-        elif days_left is not None and days_left <= JWT_WARN_DAYS:
-            if now - h.get("last_jwt_warn", 0) >= JWT_WARN_COOLDOWN_DAYS * 86400:
-                push_email_text(
-                    "⚠️ 电费查询凭证将在 %d 天后过期，请提前重新抓包" % int(days_left),
-                    "你的登录凭证将于 %s 过期（还剩约 %d 天）。\n"
-                    "建议提前重新抓包并更新 .env 的 XJTU_CEMS_JWT，避免监控突然中断。" %
-                    (_fmt_ts(exp_ts), int(days_left)))
-                h["last_jwt_warn"] = now
-                save_history(h)
-                log.info("凭证即将过期，已发提醒邮件")
-
     # ===== 抓取余额（含重试退避；瞬时失败仅记日志，持续失败才邮件）=====
     try:
         bal = fetch_balance()
     except AuthExpired as e:
         push_email_text(
-            "⚠️ 监控已停止：电费凭证被服务器拒绝",
-            "查询电费接口返回鉴权失败（%s）。\n"
-            "凭证很可能已过期或失效，请重新抓包并更新 .env 的 XJTU_CEMS_JWT。\n"
+            "⚠️ 监控已停止：电费接口拒绝访问",
+            "查询电费接口返回拒绝访问（%s）。\n"
+            "请确认本机处于校园网（能访问 ssn.xjtu.edu.cn），或接口地址/参数已变更。\n"
             "本次未记录新数据；修复后下次运行即恢复正常。" % e)
-        raise SystemExit("凭证失效，已发邮件通知，退出。")
+        raise SystemExit("接口拒绝访问，已发邮件通知，退出。")
     except Exception as e:
         last_ok = h.get("last_success")
         if last_ok and (now - last_ok) >= FAIL_ALERT_HOURS * 3600:
