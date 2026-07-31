@@ -3,5 +3,9 @@
 #   pip install -r requirements.txt
 requests
 matplotlib
-qrcode[pil]
 numpy
+
+# 打包成 exe 所需（仅构建期需要，运行不需要）：
+#   pip install pyinstaller
+pyinstaller
+

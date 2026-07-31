@@ -1,14 +1,59 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""核心纯函数单元测试：compute / detect_anomaly。
+"""核心纯函数单元测试：_load_dotenv / compute / detect_anomaly / save_history。
 
 运行：
     .venv/Scripts/python.exe test_core.py
 """
+import json
+import os
+import tempfile
 import time
 import unittest
 
 import dorm_elec_auto as m
+
+
+class TestLoadDotenv(unittest.TestCase):
+    """测试 .env 文件解析逻辑。"""
+
+    def test_basic_kv(self):
+        d = m._load_dotenv(self._make_env("KEY=val\nFOO=bar"))
+        self.assertEqual(d["KEY"], "val")
+        self.assertEqual(d["FOO"], "bar")
+
+    def test_double_quoted_value(self):
+        d = m._load_dotenv(self._make_env("KEY=\"hello world\""))
+        self.assertEqual(d["KEY"], "hello world")
+
+    def test_single_quoted_value(self):
+        d = m._load_dotenv(self._make_env("KEY='hello world'"))
+        self.assertEqual(d["KEY"], "hello world")
+
+    def test_value_with_equals(self):
+        """值中包含 = 号应正确解析（split("=", 1) 的正确行为）。"""
+        d = m._load_dotenv(self._make_env("URL=https://example.com?a=1&b=2"))
+        self.assertEqual(d["URL"], "https://example.com?a=1&b=2")
+
+    def test_value_with_inner_quotes(self):
+        """值包含引号字符但首尾不是配对引号，应保留原样。"""
+        d = m._load_dotenv(self._make_env("KEY=val\"ue"))
+        self.assertEqual(d["KEY"], "val\"ue")
+
+    def test_empty_and_comments(self):
+        d = m._load_dotenv(self._make_env("\n# comment\n\nA=1\n"))
+        self.assertEqual(d, {"A": "1"})
+
+    def test_missing_file(self):
+        d = m._load_dotenv("/nonexistent/path/.env")
+        self.assertEqual(d, {})
+
+    @staticmethod
+    def _make_env(content):
+        fd, path = tempfile.mkstemp(suffix=".env")
+        os.write(fd, content.encode("utf-8"))
+        os.close(fd)
+        return path
 
 
 class TestCompute(unittest.TestCase):
@@ -60,12 +105,29 @@ class TestDetectAnomaly(unittest.TestCase):
         self.assertTrue(is_anom)
         self.assertIn("last_usage", info)
 
+    def test_old_data_excluded_from_baseline(self):
+        """旧数据（>30天）不应参与基线计算，避免假期零耗电污染基线。"""
+        now = int(time.time())
+        hist = []
+        # 40 天前~31 天前：几乎不耗电（模拟假期）
+        bal = 100.0
+        for i in range(10):
+            t = now - (40 - i) * 86400
+            hist.append({"t": t, "b": bal})
+            bal -= 0.001  # 几乎不耗电
+        # 近 30 天内：正常缓慢耗电
+        for i in range(20):
+            t = now - (30 - i) * 3600
+            hist.append({"t": t, "b": bal})
+            bal -= 0.1  # 正常耗电
+        # 最后一段：正常范围内，不应因旧数据的零基线而被误报
+        hist.append({"t": now, "b": bal - 0.15})
+        is_anom, _ = m.detect_anomaly(hist)
+        self.assertFalse(is_anom, "正常用电不应因旧数据（假期零耗电）污染基线而被误判为异常")
+
 
 class TestSaveHistory(unittest.TestCase):
     def test_atomic_roundtrip(self):
-        import json
-        import tempfile
-        import os
         d = tempfile.mkdtemp()
         orig_store = m.STORE
         try:

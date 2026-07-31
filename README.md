@@ -15,7 +15,7 @@
 - ⚡ **异常用电检测**（用电量骤增时提醒，防忘关电器 / 故障 / 漏电）
 - 🔐 **无需登录凭证**：接口在校园网内仅凭 `roomId` 即可取数，无需抓包 JWT、无需任何 Cookie
 - 📊 **双周期报告**：每周发「近一周·手机版」趋势图，每月发「近 30 天·桌面版」趋势图
-- 🌐 生成**网页报告 + 二维码**，手机扫码随时看
+- 🌐 生成**网页报告**，本机浏览器打开看**实时刷新**的统计图
 
 > 本仓库为通用模板，**核心配置（房间号）需自行填充**，详见下文「安装与配置」。
 
@@ -32,8 +32,8 @@
 | 异常用电检测 | 积累 ≥`ANOMALY_MIN_SAMPLES`（默认 20）条后启用；最新一段「日耗电速率」≥ 基线（中位数）的 `ANOMALY_MULTIPLE`（默认 3）倍且单次 ≥`ANOMALY_MIN_USAGE`（默认 ¥5）则提醒（冷却 `ANOMALY_COOLDOWN_DAYS` 天） |
 | 周报 | 每 `REPORT_CYCLE_DAYS`（默认 7）天，邮件推送「近一周·手机竖屏版」趋势图 |
 | 月报 | 每 `MONTHLY_CYCLE_DAYS`（默认 30）天，邮件推送「近 30 天·桌面横版」趋势图 |
-| 网页报告 | 生成自包含 `deploy/index.html`（内嵌趋势图 + 二维码），可部署到公网 |
-| 推送渠道 | [Agent Mail CLI](https://agent.qq.com)（以智能体邮箱身份发信，免费） |
+| 网页报告 | 生成自包含 `deploy/index.html`（引用趋势图），本机浏览器实时查看 |
+| 推送渠道 | Python 内置 SMTP（QQ/163/Gmail 等邮箱均可，可打包进 exe 双击即用） |
 
 ---
 
@@ -50,7 +50,6 @@ flowchart LR
     D -->|满30天| H[邮件: 月报\n近30天·桌面版图]
     B --> I[chart.png\n近30天·手机版]
     I --> J[deploy/index.html\n网页报告]
-    J --> K[二维码 qr.png]
 ```
 
 **数据反推原理**：相邻两次采样余额差即该时段用电量（余额下降=耗电，回升=充值）。异常检测把任意时长段的耗电**折算成「元/天」速率**再与历史基线比较，因此对采样间隔不均匀（偶尔漏跑）也鲁棒。
@@ -72,79 +71,112 @@ flowchart LR
 
 ## 五、环境依赖
 
-- Python ≥ 3.8
-- Python 库：`requests`、`matplotlib`、`qrcode[pil]`
-- 命令行工具：[`agently-cli`](https://agent.qq.com)（Agent Mail CLI，用于发邮件，需先 `agently-cli auth login` 完成 OAuth 授权）
-- 运行环境：**需能访问校园网**（cems 为校内系统，公网不可达）
+两种使用方式，按需二选一：
 
-> 推荐用虚拟环境：`python -m venv .venv` → `.venv\Scripts\activate` → `pip install requests matplotlib "qrcode[pil]"`。
+**方式 A：直接用 exe（推荐，零环境配置）**
+- 从本仓库 **Releases 页面**下载 `宿舍电费监控_onefile.exe`（单文件）或 `宿舍电费监控_onedir.zip`（目录版），双击即用，**无需安装 Python / 任何依赖**。
+- 首次启动会弹出图形配置向导，按提示填房间号、邮箱、SMTP 授权码即可（见下文「六、安装、配置与运行」）。
+- 运行环境：**需能访问校园网**（cems 为校内系统，公网不可达）。
+
+**方式 B：源码运行（适合开发者/想自己打包）**
+- Python ≥ 3.8
+- Python 库：`requests`、`matplotlib`、`numpy`；打包另需 `pyinstaller`
+- 运行环境：**需能访问校园网**
+- 邮件用 Python 内置 `smtplib` 直连邮箱 SMTP 服务器（QQ/163/Gmail 等均可），**无需 Node.js / agently-cli**。
+
+> 推荐用虚拟环境：`python -m venv .venv` → `.venv\Scripts\activate` → `pip install -r requirements.txt`。
 
 ---
 
-## 六、安装与配置（小白版，4 步搞定）（懒人版：可以直接找个agent，发给它本仓库项目的网址，让它帮你搞定ALL）
+## 六、安装、配置与运行
+
+> 💡 **懒人最省事**：直接从本仓库 **Releases 页面**下载打包好的 **exe**，全程图形界面，不用碰命令行、不用装 Python。
+> 想从源码自己打包，见文末「附录：自己打包成 exe」。
 
 ### 第 0 步：抓包获取配置参数
 
 [抓包指南](抓包指南.md)
 获得参数：**roomId**（接口仅需在校园网内 + roomId 即可取数，**无需 JWT / 登录凭证**）
 
-### 第 1 步：装好运行环境
+### 方式 A：exe 双击即用（推荐）
+
+#### 1) 从 Releases 下载（两个版本，功能完全一致，任选其一）
+
+| | `宿舍电费监控_onefile.exe`（单文件版） | `宿舍电费监控_onedir.zip`（目录版） |
+|---|---|---|
+| 形态 | 单个 exe 文件，拷到任意位置双击即用 | 压缩包，解压后是一整个文件夹（exe + `_internal` 依赖） |
+| 启动速度 | 首启稍慢（需解压运行环境） | 启动快 |
+| 内存占用 | 略高 | 略低 |
+| 拷贝/分发 | 只带一个文件即可 | 整个文件夹一起拷贝，不能只拿 exe |
+| 适合场景 | 想只带一个文件、随处拷贝 | 固定放在某处长期运行 |
+
+> 共同点：功能完全相同；首次启动都会弹出图形配置向导；`.env`/存档/日志等数据都落在 **exe 同目录**（便携可迁移）。**两个版本不要放在同一目录同时运行**（数据与锁文件会互相干扰）。
+
+#### 2) 首次启动：配置向导
+
+1. 拿到 exe（单文件版）或解压 onedir 压缩包，放到任意位置。
+2. **双击 exe** → 首次启动自动弹出图形配置向导，按提示填：
+   - 宿舍房间号 roomId
+   - 收件邮箱（接收电费通知的邮箱）
+   - 发件邮箱服务商（下拉选 QQ/163/Gmail/Outlook，自动填好 SMTP 服务器）
+   - 发件邮箱账号 + **SMTP 授权码**（⚠️ 不是登录密码，见下方说明）
+3. 点 **「测试连接」** → 稍等收到测试邮件即说明配置成功 → 点 **「保存并开始」**。
+4. 向导关闭后程序自动进入常驻：每 6h 抓取、低余额预警、周/月报、本地网页服务（本机浏览器打开 `http://127.0.0.1:8765/` 看实时报告）。
+5. 下次双击直接常驻（配置已存 `.env`，不再弹向导）。
+
+> ⚠️ **SMTP 授权码怎么获取？**
+> 授权码 ≠ 邮箱登录密码，需到邮箱网页开启「SMTP 服务」后生成：
+> - **QQ 邮箱**：设置 → 账户 → 开启「IMAP/SMTP 服务」→ 生成授权码
+> - **163 邮箱**：设置 → POP3/SMTP/IMAP → 开启「SMTP 服务」→ 设置授权码
+> - **Gmail**：账户开启「两步验证」后生成「应用专用密码」
+> 向导里选对应服务商，主机/端口/加密方式会自动填好，你只需填账号和授权码。
+
+### 方式 B：源码运行 / 自己打包
 
 ```bash
 git clone <你的仓库地址>
 cd dorm-electricity-monitor
 python -m venv .venv
 .venv\Scripts\activate            # Windows 进入虚拟环境
-pip install requests matplotlib "qrcode[pil]"
+pip install -r requirements.txt
 ```
 
-- 需要 **Python ≥ 3.8**（电脑已装可跳过前两步）。
-- 手动操作的话，邮件功能需要 **Node.js**（下一步会用到，没装的话去 nodejs.org 下个「LTS」版一路下一步即可）。
-
-### 第 2 步：配置 Agent Mail（这就是发邮件的通道）
-
-> 💡 **Agent Mail 是什么？**
-> 腾讯推出的邮件发送工具，官网：<https://agent.qq.com/>
-> **小白最省事的办法**：打开任意 Agent（比如 WorkBuddy 对话框），直接发这一句话👇
->
-> ```
-> 请阅读 https://agent.qq.com/doc/cli-setup.md 文档，按照步骤为我安装并配置 Agent Mail CLI。
-> ```
->
-> 它会自动帮你装好 `agently-cli` 并完成授权登录，**你完全不用自己记命令**。
->
-> 想自己手动装也行：装好 Node.js 后执行 `npm i -g agently-cli`，再跑 `agently-cli auth login` 按提示用浏览器扫码授权。
-
-### 第 3 步：填好配置（一键完成）
+填好配置（任选其一）：
+- **图形向导**：`python config_wizard.py`（与 exe 首次启动同一个界面）
+- **命令行**：`python setup.py`
+- **手动编辑**：`cp .env.example .env` 后用记事本填字段
 
 ```bash
-python setup.py
+python config_wizard.py     # 推荐：图形界面，带「测试连接」
 ```
 
-按提示回答几个问题（房间号、收件邮箱等），脚本自动生成 `.env`，**不用手动改任何文件**。
-
 <details>
-<summary>备选：手动配置（不想跑脚本时用）</summary>
+<summary>备选：手动配置 .env 字段</summary>
 
 ```bash
 cp .env.example .env
-# 用记事本打开 .env，填下面 4 个字段：
+# 用记事本打开 .env，填下面字段：
 ```
 
 ```ini
 # 本地配置，已被 .gitignore 排除，严禁提交
-XJTU_ROOM_ID=××××                        # 你的房间号（ProxyPin 抓包请求 URL 里的 roomId 参数）
+XJTU_ROOM_ID=××××                        # 必填：房间号（ProxyPin 抓包请求 URL 里的 roomId 参数）
 XJTU_RECIPIENT=you@example.com            # 必填：收件邮箱
-XJTU_SHARE_URL=                          # 可选：网页报告公网链接
-AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
+# SMTP 发件配置（必填，用于发邮件）
+SMTP_HOST=smtp.qq.com                     # 发件服务器（QQ=smtp.qq.com / 163=smtp.163.com）
+SMTP_PORT=465                             # 端口（SSL 通常 465，STARTTLS 587）
+SMTP_TLS=ssl                              # 加密方式：ssl / starttls / none
+SMTP_USER=you@example.com                 # 发件邮箱账号
+SMTP_PASS=<你的SMTP授权码>                # 授权码（不是登录密码！）
+SMTP_FROM=                               # 可选：留空则用 SMTP_USER
 ```
 
 </details>
 
 ### 收件邮箱填谁的？（重要）
 
-- **发件人 = 你自己的「智能体邮箱」**：第 2 步 `agently-cli auth login` 授权后自动确定（形如 `xxx@agent.qq.com`）。
-- **收件人 = `XJTU_RECIPIENT`**：填你平时看邮件的邮箱（可以是同一个智能体邮箱自收发，也可以是常用 QQ/163 邮箱）。不填脚本会直接报错退出。
+- **发件人 = `SMTP_USER`**：你开启 SMTP 服务的那个邮箱（如你的 QQ 邮箱）。
+- **收件人 = `XJTU_RECIPIENT`**：填你平时看邮件的邮箱（可与发件人相同自收发，或填常用邮箱）。不填脚本会直接报错退出。
 
 > ⚠️ **本配置不含任何登录凭证**：接口在校园网内仅凭 `roomId` 即可取数，无需 JWT / Cookie。请照常**不要把 `.env` 提交到公开仓库**（虽无凭证，但含你的房间号与邮箱）。`.env` 放在脚本同目录即可，**无需设置系统环境变量**。
 
@@ -156,8 +188,12 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 |------|---------|------|
 | `XJTU_ROOM_ID` | ✅ 必填 | 宿舍房间号（roomId，校园网内取数唯一所需参数） |
 | `XJTU_RECIPIENT` | ✅ 必填 | 收件邮箱，接收所有通知与报告 |
-| `XJTU_SHARE_URL` | 可选 | 网页报告公网链接；填了二维码才有效 |
-| `AGENTLY_BIN` | 可选（自动探测） | `agently-cli` 绝对路径；探测失败时需手填 |
+| `SMTP_HOST` | ✅ 必填 | 发件 SMTP 服务器（如 `smtp.qq.com`） |
+| `SMTP_PORT` | ✅ 必填 | 端口（SSL 通常 465，STARTTLS 587） |
+| `SMTP_TLS` | ✅ 必填 | 加密方式：`ssl` / `starttls` / `none` |
+| `SMTP_USER` | ✅ 必填 | 发件邮箱账号 |
+| `SMTP_PASS` | ✅ 必填 | SMTP 授权码（非登录密码） |
+| `SMTP_FROM` | 可选 | 发件人地址；留空则用 `SMTP_USER` |
 
 > 配置优先级：**`.env` > 系统环境变量 > 代码内置默认值**。改 `.env` 立即生效，无需动系统环境变量。
 
@@ -176,62 +212,76 @@ AGENTLY_BIN=D:\path\to\agently-cli.cmd   # 可选：留空自动探测
 | `ANOMALY_COOLDOWN_DAYS` | `1` | 异常邮件最短间隔（天） |
 | `RECHARGE_CAP_MULT` | `2.0` | 充值柱高度封顶倍数（相对日用电最大值）；调大=充值柱更高，调小=更紧凑 |
 
----
+### 启动 / 停止 / 调试
 
-## 七、部署运行
+> **一个进程搞定全部**：`dorm_elec_auto.py` **自带网页服务**——一边按 `XJTU_INTERVAL_HOURS`（默认 6 小时，可用环境变量覆盖）循环抓取电费，一边在后台起一个本地网页服务（端口 `8765`）把 `deploy/` 实时提供出来。**抓取与网页是同一个进程，停止/启动一体。**
 
-### Windows（推荐）
-用「任务计划程序」每 6 小时跑一次（无需 WorkBuddy / 任何 IDE，独立运行，但是推荐让agent帮你部署好）：
-```powershell
-$action = New-ScheduledTaskAction -Execute "<项目路径>\.venv\Scripts\python.exe" -Argument "dorm_elec_auto.py" -WorkingDirectory "<项目路径>"
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 6) -RepetitionDuration (New-TimeSpan -Days 3650)
-Register-ScheduledTask -TaskName "宿舍电费监控" -Action $action -Trigger $trigger -Force
-```
+- **启动**：
+  - **exe 模式**：直接双击 `宿舍电费监控.exe`（配置已存则直接常驻；首次启动会弹配置向导）；
+  - **源码模式**：双击 **`run_dorm.vbs`**（静默拉起 `pythonw`，不弹窗）；或
+  - 命令行 `.venv\Scripts\pythonw.exe dorm_elec_auto.py`。
+- **停止**（二选一）：
+  - 双击 **`stop_dorm.bat`**（结束 `pythonw.exe` 与 `宿舍电费监控.exe` 并清锁，最稳妥；会短暂弹一个命令行窗口，运行完显示「完成」即可关闭）；
+  - 任务管理器里结束 `pythonw.exe` / `宿舍电费监控.exe` 进程。
+  - 两种方式都会清掉锁文件；即便锁残留，**停掉后随时可再启动、不会被旧锁卡住**——进程被杀后锁里的 PID 已失效，新实例检测到「死 PID」会立即接管。
+- **调试单次**：双击 `run_dorm.bat`（前台窗口、`--once` 跑一次即退出，看得见日志，不常驻、不起网页服务）。
+
+### 本机浏览器看实时报告
+
+服务常驻后，本机浏览器打开 `http://127.0.0.1:8765/` 即看（默认仅本机可访问）。
+访问地址也会写在 `deploy/serve_url.txt`。
+页面自带 `<meta http-equiv="refresh" content="60">` 且服务器返回 `Cache-Control: no-store`——**每 60 秒自动刷新到最新图，浏览器不缓存旧图**。
+
+> ⚠️ **访问范围**：网页服务默认只绑定本机（`127.0.0.1`），**不对外暴露**，校园网内其它设备无法访问。
+
+> 📌 **抓取频率**：默认每 6 小时一轮（启动时先抓一次）。周报/月报按「数据积累天数」触发，与抓取频率无关；
+> 「抓取连续失败 24 小时才告警」。可用环境变量 `XJTU_INTERVAL_HOURS` 覆盖间隔（例如设 `2` 表示每 2 小时）。
+
 > `.env` 与脚本同目录即可（脚本会自动读取），**无需设置系统环境变量**。
 
-> 📌 **实测部署频率**：本文档默认按「每 6 小时」调度描述，但作者实际以 Windows 任务计划**每天 20:21 运行一次**，功能同样正常——周报/月报按「数据积累天数」触发（与调度频率无关），而「抓取连续失败 24 小时才告警」在每天节奏下约等于「容忍 1 个失败日」。你可按需要选择每 6h 或每天一次。
-
-### 可选：公网网页报告
-将 `deploy/` 目录部署到任意静态托管（如 CloudStudio / GitHub Pages / Vercel），把链接填入 `SHARE_URL` 并重新生成，即可扫码访问。
-
 ---
 
-## 八、文件结构
+## 七、文件结构
 
 本项目已整理在 `dorm-electricity-monitor/` 文件夹中，克隆仓库后该目录即项目根。
 
 ```
 dorm-electricity-monitor/          # 项目根目录（git 仓库根）
-├── dorm_elec_auto.py        # 核心脚本：采集+计算+绘图+邮件推送+报告生成
-├── setup.py                 # 一键交互式配置 → 生成 .env（重跑保留已有值）
+├── dorm_elec_auto.py        # 核心脚本（单进程服务）：采集+计算+绘图+邮件(SMTP)推送+报告生成+内置实时网页服务
+├── config_wizard.py         # 首次配置图形向导（tkinter）：exe 双击首启时弹出；也可 python config_wizard.py 重配
+├── build_exe.py             # 打包脚本：python build_exe.py 一键生成 exe（默认 onedir）
+├── setup.py                 # 命令行配置工具 → 生成 .env（重跑保留已有值）
 ├── test_core.py            # 单元测试（用量计算/异常检测）
-├── run_dorm.bat             # Windows 任务计划启动器（自动定位脚本目录）
-├── .env.example             # 配置模板（复制为 .env 后填写）
+├── run_dorm.bat             # 前台调试用：--once 跑一次即退出（看得见日志，不常驻）
+├── run_dorm.vbs             # 静默启动器（pythonw，不弹窗）：双击/手动启动后台常驻
+├── stop_dorm.bat            # 停止器（同时结束 pythonw.exe 与 宿舍电费监控.exe 并清锁）
+├── .env.example             # 配置模板（复制为 .env 后填写；含 SMTP 字段）
 ├── .gitignore
 ├── LICENSE                  # MIT 许可证
 ├── README.md
 ├── 抓包指南.md            # 抓包获取 roomId 图文教程（无需 JWT）
 ├── assets/
 │   └── preview.png          # README 效果示意图
-├── deploy/                 # 【运行生成，gitignore】网页报告目录（脚本生成 index.html）
-│   └── index.html           # 自包含网页报告（内嵌趋势图+二维码）
-├── .env                     # 【本地生成，gitignore】真实凭证，切勿提交
+├── deploy/                 # 【运行生成，gitignore】网页报告目录
+│   ├── index.html           # 实时网页（外部 chart.png + 每60秒自动刷新）
+│   ├── chart.png            # 趋势图（脚本生成，内置网页服务实时读取）
+│   └── serve_url.txt        # 内置服务写出的本机访问地址
+├── .env                     # 【本地生成，gitignore】真实配置（含 SMTP 授权码），切勿提交
 ├── .venv/                   # 【本地生成，gitignore】Python 虚拟环境
 ├── dorm_balance.json        # 【本地生成，gitignore】历史存档
-├── chart.png                # 【本地生成，gitignore】趋势图
-├── qr.png                   # 【本地生成，gitignore】二维码
+├── build/, dist/            # 【打包生成，gitignore】PyInstaller 构建产物
 └── __pycache__/             # 【本地生成，gitignore】Python 缓存
 ```
 
 > 标注 **【gitignore】** 的文件由 `.gitignore` 排除，不会进入版本库；其余文件均已提交。
 
-> **网页报告**：`deploy/index.html` 是由 `dorm_elec_auto.py` 每次运行生成的**自动监控报告**（内嵌趋势图 + 二维码），可部署到公网后扫码查看。它是脚本产物，无需手动维护。
+> **网页报告**：`deploy/index.html` 是由 `dorm_elec_auto.py` 每次运行生成的**自动监控报告**（引用 `chart.png` + 每 60 秒自动刷新），由脚本**内置网页服务**常驻提供，本机浏览器打开即看最新图。它是脚本产物，无需手动维护。
 
 ---
 
-## 九、技术路线图（Roadmap）
+## 八、技术路线图（Roadmap）
 
-### ✅ 已完成（v1.0）
+### ✅ 已完成（v2.0）
 - [x] 抓包定位 cems 余额接口（ProxyPin，webview 明文）
 - [x] 每 6h 自动采集 + 本地存档（保留 100 天）
 - [x] 用电量反推（近 24h / 日均，区分充值与耗电）
@@ -240,26 +290,27 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 - [x] 双周期报告：周报（近 7 天·手机版）+ 月报（近 30 天·桌面版）
 - [x] 专业级可视化（KPI 卡片 / 圆角柱 / 统一冷色调 / 底部图例 / 移动端适配）
 - [x] 充值柱高度封顶（避免充值金额拉爆纵轴，真实金额以标注显示）
-- [x] 网页报告 + 二维码（CloudStudio 部署）
-- [x] Agent Mail 免费推送渠道
+- [x] 网页报告（内置实时网页服务，本机浏览器查看）
+- [x] SMTP 邮件推送（QQ/163/Gmail 等，可打包进 exe）
 - [x] 免登录凭证取数（校园网内仅凭 roomId 即可，无需抓包 JWT）
 - [x] 凭证安全外置（环境变量 / `.env`，去除硬编码；本项目本就无需凭证）
 - [x] 抓取重试 + 指数退避（瞬时失败不误发告警邮件，仅持续失败才提醒）
 - [x] 运行日志 `dorm_monitor.log`（按大小滚动，排障用）
 - [x] 调试参数 `--dry-run` / `--test-email`（验证配置与邮件通道）
-- [x] 启动配置校验（房间号 / agently 路径 fail-fast）
+- [x] 启动配置校验（房间号 / SMTP 关键字段 fail-fast）
+- [x] 图形配置向导（tkinter，exe 首次启动自动弹出，带「测试连接」）
+- [x] 一键打包 exe（onefile / onedir 两种模式）并随 GitHub Releases 发布
 
 
 因为是小白，对代码的理解仅限于本科学过的大计基和C++以及计算机二级hh
-这是我在workbuddy的帮助下vibecoding的产物
 肯定存在可以优化的地方
 欢迎大佬一起完善 👏
 
 ---
 
-## 十、调试与排障
+## 九、调试与排障
 
-本工具以 Windows 任务计划后台运行（无可见控制台），以下手段便于验证配置与排查问题：
+本工具默认后台常驻运行（exe 双击或 `pythonw` 静默运行，无可见控制台），以下手段便于验证配置与排查问题：
 
 ```bash
 
@@ -272,7 +323,7 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 
 - **运行日志**：每次运行写入 `dorm_monitor.log`（按大小滚动，保留最近 3 份），含时间戳、步骤与错误原因，排障时优先查看。
 - **瞬时失败不误报**：网络抖动等瞬时错误会自动重试（3 次，指数退避），且**不会**发告警邮件；仅当抓取连续失败超过 24 小时才会发「持续异常」邮件，避免误报。
-- **启动即校验**：房间号须为正整数、`agently-cli` 路径须存在，配置错误会立即给出清晰报错退出。
+- **启动即校验**：房间号须为正整数、收件邮箱与 SMTP 关键字段须齐全，配置错误会立即给出清晰报错退出。首次启动无 `.env` 时会自动弹出图形配置向导。
 - **单元测试**：核心纯函数（用量计算 / 异常检测）有 `test_core.py` 覆盖，改代码前可先跑一遍防回归：
   ```bash
   .venv\Scripts\python.exe test_core.py
@@ -286,6 +337,36 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 - 尽管如此，仍建议**不要把 `.env` 提交到任何公开仓库**（其中含你的房间号与收件邮箱）。本项目已通过「`.env`（gitignore 排除）」方式管理配置。
 - 数据仅保存在你本地 `dorm_balance.json`，不上传任何第三方服务器（除你主动配置的邮件收件人与部署平台）。
 - 请遵守学校网络使用规范，勿高频请求接口（默认 6h 一次，已足够温和）。
+
+---
+
+## 附录：自己打包成 exe
+
+仓库自带一键打包脚本 `build_exe.py`，把项目打包成 Windows exe（双击即用，无需 Python 环境）。
+
+```bash
+# 1) 装好构建依赖（含 PyInstaller）
+pip install -r requirements.txt
+
+# 2) 一键打包（默认 onedir 模式：启动快、对 matplotlib 友好）
+python build_exe.py
+
+# 备选：单文件 exe（首启稍慢，体积更大）
+python build_exe.py --onefile
+```
+
+产物位置：
+- onedir：`dist/宿舍电费监控/宿舍电费监控.exe`（**连同整个文件夹一起分发**）
+- onefile：`dist/宿舍电费监控.exe`
+
+> GitHub Releases 上发布的两个资产即上述两种产物：`宿舍电费监控_onefile.exe`（单文件版）与 `宿舍电费监控_onedir.zip`（目录版压缩包），对应关系见「六、安装、配置与运行 → 方式 A」。
+
+打包关键点（脚本已自动处理）：
+- `--windowed`：无控制台黑窗，后台常驻；首次启动弹 tkinter 配置向导。
+- `--collect-all matplotlib`：matplotlib 字体/样式数据必须显式收集，否则绘图崩溃。
+- 数据文件（`.env`/存档/日志/`deploy/`）运行时落在 **exe 同目录**，便携可迁移。
+
+> ⚠️ **杀软误报**：PyInstaller 打包的 exe 有时会被杀毒软件误报，属常见现象（因自打包 exe 特征）。可加入信任名单，或用 onedir 模式（误报率更低）。
 
 ---
 
