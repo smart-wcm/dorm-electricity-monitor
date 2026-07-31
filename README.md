@@ -74,7 +74,7 @@ flowchart LR
 两种使用方式，按需二选一：
 
 **方式 A：直接用 exe（推荐，零环境配置）**
-- 从本仓库 **Releases 页面**下载 `宿舍电费监控_onefile.exe`（单文件）或 `宿舍电费监控_onedir.zip`（目录版），双击即用，**无需安装 Python / 任何依赖**。
+- 从本仓库 **Releases 页面**下载 `dorm-elec-monitor_v2.0.0_onefile.exe`（单文件）或 `dorm-elec-monitor_v2.0.0_onedir.zip`（目录版），双击即用，**无需安装 Python / 任何依赖**。
 - 首次启动会弹出图形配置向导，按提示填房间号、邮箱、SMTP 授权码即可（见下文「六、安装、配置与运行」）。
 - 运行环境：**需能访问校园网**（cems 为校内系统，公网不可达）。
 
@@ -102,7 +102,7 @@ flowchart LR
 
 #### 1) 从 Releases 下载（两个版本，功能完全一致，任选其一）
 
-| | `宿舍电费监控_onefile.exe`（单文件版） | `宿舍电费监控_onedir.zip`（目录版） |
+| | `dorm-elec-monitor_v2.0.0_onefile.exe`（单文件版） | `dorm-elec-monitor_v2.0.0_onedir.zip`（目录版） |
 |---|---|---|
 | 形态 | 单个 exe 文件，拷到任意位置双击即用 | 压缩包，解压后是一整个文件夹（exe + `_internal` 依赖） |
 | 启动速度 | 首启稍慢（需解压运行环境） | 启动快 |
@@ -359,7 +359,7 @@ python build_exe.py --onefile
 - onedir：`dist/宿舍电费监控/宿舍电费监控.exe`（**连同整个文件夹一起分发**）
 - onefile：`dist/宿舍电费监控.exe`
 
-> GitHub Releases 上发布的两个资产即上述两种产物：`宿舍电费监控_onefile.exe`（单文件版）与 `宿舍电费监控_onedir.zip`（目录版压缩包），对应关系见「六、安装、配置与运行 → 方式 A」。
+> GitHub Releases 上发布的两个资产即上述两种产物：`dorm-elec-monitor_v2.0.0_onefile.exe`（单文件版）与 `dorm-elec-monitor_v2.0.0_onedir.zip`（目录版压缩包），对应关系见「六、安装、配置与运行 → 方式 A」。
 
 打包关键点（脚本已自动处理）：
 - `--windowed`：无控制台黑窗，后台常驻；首次启动弹 tkinter 配置向导。
