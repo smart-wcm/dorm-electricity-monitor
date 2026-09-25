@@ -34,6 +34,8 @@ dist/
 # 重新打包时移走的旧产物备份（如 dist_bak_20260924/），勿提交
 dist_bak*/
 build_bak*/
+# 发布到 GitHub Release 的打包资产（仅上传 Release，不进仓库）
+release_assets/
 
 # ===== 编辑器 / IDE =====
 .idea/
