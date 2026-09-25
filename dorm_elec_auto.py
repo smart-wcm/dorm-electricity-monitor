@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.8"
-# dependencies = ["requests", "matplotlib", "numpy"]
+# dependencies = ["requests", "matplotlib", "numpy", "pystray"]
 # ///
 # -*- coding: utf-8 -*-
 """
@@ -172,6 +172,32 @@ LOG_FILE = os.path.join(APP_DIR, "dorm_monitor.log")  # 运行日志（绝对路
 # 日志器（handler 在 main() 里按运行环境挂载，避免导入即写文件）
 log = logging.getLogger("dorm_monitor")
 
+# 托盘读取的运行状态；只存内存，不写入存档。
+_STATUS_LOCK = threading.Lock()
+_STATUS = {
+    "state": "starting",       # starting / running / success / error
+    "balance": None,
+    "last_run": 0,
+    "last_success": 0,
+    "last24": None,
+    "avg_day": None,
+    "history_count": 0,
+    "last_error": "",
+    "next_run": 0,
+}
+
+
+def _update_status(**changes):
+    with _STATUS_LOCK:
+        _STATUS.update(changes)
+
+
+def get_status():
+    """返回托盘使用的状态快照。"""
+    with _STATUS_LOCK:
+        return dict(_STATUS)
+
+
 # ===================== 3b. 实时网页服务（本机） =====================
 # 网页报告默认指向【本机实时服务】地址：本机浏览器打开即看最新图，
 # 无需公网、无需每次重新部署（服务由本进程常驻提供，见 README「实时网页」）。
@@ -285,8 +311,10 @@ def fetch_balance(retries=3, backoff=2.0):
     last_err = None
     for attempt in range(1, retries + 1):
         try:
-            # proxies 显式禁代理：ssn.xjtu.edu.cn 仅校园网直连可达，
-            # 防止 Clash/SS/机场客户端等系统代理把请求发往境外节点导致失败。
+            # 显式声明不使用任何代理：proxies={"http": None, "https": None}。
+            # 注意 requests 中 proxies={} 并不等于禁用代理——空 dict 不会为
+            # http/https 指定值，requests 仍会回退到 Windows 系统代理/环境变量，
+            # 于是被 ProxyPin 等抓包/代理软件设置的本地代理拦住（WinError 10061）。
             r = requests.get(API_URL, headers=HEADERS, timeout=15,
                              proxies={"http": None, "https": None})
         except requests.RequestException as e:
@@ -916,9 +944,11 @@ def validate_config():
 
 
 def _run_once():
-    """单次抓取+计算+存档+图+报告+邮件；异常返回不抛出，保证服务模式常驻。"""
+    """单次抓取+计算+存档+图+报告+邮件；返回本轮是否成功。"""
     now = int(time.time())
     h = load_history()
+    _update_status(state="running", last_run=now, last_error="",
+                   history_count=len(h.get("history", [])), next_run=0)
 
     # ===== 抓取余额（含重试退避；瞬时失败仅记日志，持续失败才邮件）=====
     try:
@@ -929,8 +959,10 @@ def _run_once():
             "查询电费接口返回拒绝访问（%s）。\n"
             "请确认本机处于校园网（能访问 ssn.xjtu.edu.cn），或接口地址/参数已变更。\n"
             "本次未记录新数据；修复后下次运行即恢复正常。" % e)
+        _update_status(state="error", last_error=f"接口拒绝访问：{e}",
+                       history_count=len(h.get("history", [])))
         log.error("接口拒绝访问，已发邮件通知，跳过本轮。")
-        return
+        return False
     except Exception as e:
         last_ok = h.get("last_success")
         if last_ok and (now - last_ok) >= FAIL_ALERT_HOURS * 3600:
@@ -942,11 +974,15 @@ def _run_once():
             log.error("抓取持续失败，已发邮件通知：%s", e)
         else:
             log.warning("本次抓取失败（瞬时，未发邮件，下次运行重试）：%s", e)
-        return
+        _update_status(state="error", last_error=str(e),
+                       history_count=len(h.get("history", [])))
+        return False
     else:
         h["last_success"] = now
 
     h["history"], last24, avg_day = compute(h["history"], bal)
+    _update_status(balance=bal, last_success=now, last24=last24,
+                   avg_day=avg_day, history_count=len(h["history"]))
     save_history(h)
     kwh = f" | 约 {last24/PRICE_PER_KWH:.2f} 度" if PRICE_PER_KWH > 0 else ""
     log.info("当前余额 ¥%.2f | 近24h ¥%.2f%s | 日均 ¥%.2f", bal, last24, kwh, avg_day)
@@ -1008,7 +1044,27 @@ def _run_once():
     # 本地默认图表（近30天）+ 网页报告，放最后刷新，确保 chart.png 始终是默认版
     chart_png = gen_chart(h["history"])
     gen_report(h["history"], chart_png)
+    _update_status(state="success", last_error="", history_count=len(h["history"]))
     log.info("=== 本轮运行结束 ===")
+    return True
+
+
+def _service_loop(stop_event, wake_event):
+    """后台服务循环；wake_event.set() 可让下一轮立即开始。"""
+    while not stop_event.is_set():
+        try:
+            _run_once()
+        except Exception as e:
+            _update_status(state="error", last_error=str(e))
+            log.exception("单次运行异常（服务继续）: %s", e)
+        if stop_event.is_set():
+            break
+        next_run = time.time() + INTERVAL_HOURS * 3600
+        _update_status(next_run=next_run)
+        log.info("休眠 %.1f 小时至下一轮...", INTERVAL_HOURS)
+        wake_event.wait(INTERVAL_HOURS * 3600)
+        wake_event.clear()
+
 
 def main():
     # ===== 调试参数 =====
@@ -1019,6 +1075,8 @@ def main():
                         help="发送一封测试邮件确认 SMTP 邮件通道，然后退出")
     parser.add_argument("--once", action="store_true",
                         help="单次运行一次即退出（调试用）；默认无参数为常驻服务模式")
+    parser.add_argument("--no-tray", action="store_true",
+                        help="不启动系统托盘，仅运行后台服务（兼容旧用法）")
     args = parser.parse_args()
 
     # ===== 首次配置向导：.env 不存在或关键字段缺失时弹图形窗口引导填写 =====
@@ -1050,6 +1108,13 @@ def main():
     except SystemExit as e:
         log.error("配置校验失败: %s", e)
         raise
+    initial_history = load_history()
+    latest = initial_history.get("history", [])[-1:]
+    _update_status(
+        balance=latest[0]["b"] if latest else None,
+        last_success=initial_history.get("last_success", 0),
+        history_count=len(initial_history.get("history", [])),
+    )
     log.info("=== 开始运行 (PID %d) ===", os.getpid())
 
     # ===== 调试：测试邮件 =====
@@ -1074,14 +1139,45 @@ def main():
     if args.once:
         _run_once()
         return
+
     start_server_thread()
-    while True:
-        try:
-            _run_once()
-        except Exception as e:
-            log.exception("单次运行异常（服务继续）: %s", e)
-        log.info("休眠 %.1f 小时至下一轮...", INTERVAL_HOURS)
-        time.sleep(INTERVAL_HOURS * 3600)
+    stop_event = threading.Event()
+    wake_event = threading.Event()
+
+    if args.no_tray:
+        _service_loop(stop_event, wake_event)
+        return
+
+    try:
+        import tray_ui
+    except Exception as e:
+        log.warning("系统托盘不可用（%s），继续运行后台服务。", e)
+        _service_loop(stop_event, wake_event)
+        return
+
+    worker = threading.Thread(
+        target=_service_loop,
+        args=(stop_event, wake_event),
+        name="dorm-service",
+        daemon=True,
+    )
+    worker.start()
+    try:
+        tray_ui.run(
+            get_status=get_status,
+            request_run=wake_event.set,
+            request_stop=stop_event.set,
+            local_url=LOCAL_URL,
+            log_file=LOG_FILE,
+        )
+    except Exception:
+        log.exception("系统托盘运行异常，后台服务继续。")
+        while worker.is_alive():
+            worker.join(timeout=1)
+    finally:
+        stop_event.set()
+        wake_event.set()
+        worker.join(timeout=5)
 
 
 if __name__ == "__main__":

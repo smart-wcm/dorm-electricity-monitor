@@ -7,7 +7,7 @@
     python build_exe.py --onefile  # 单文件 exe（首启稍慢，体积更大）
 
 前置：
-    pip install pyinstaller requests matplotlib numpy
+    pip install pyinstaller requests matplotlib numpy pystray
 
 产物：
     dist/宿舍电费监控/宿舍电费监控.exe   （onedir，目录内含依赖）
@@ -78,6 +78,7 @@ def build(onefile=False):
         # matplotlib 绘图需要 PIL；其余隐式导入按需补充
         "--collect-all", "PIL",
         "--hidden-import", "PIL._tkinter_finder",  # tkinter 在 PyInstaller 下的桥接
+        "--hidden-import", "pystray._win32",         # Windows 系统托盘后端
         # 运行时所需资源（若有）；当前脚本无外部静态资源，预留接口
         # "--add-data", os.path.join(HERE, "assets") + os.pathsep + "assets",
     ]

@@ -31,6 +31,9 @@ _qr_*.png
 build/
 dist/
 *.spec
+# 重新打包时移走的旧产物备份（如 dist_bak_20260924/），勿提交
+dist_bak*/
+build_bak*/
 
 # ===== 编辑器 / IDE =====
 .idea/

@@ -80,7 +80,7 @@ flowchart LR
 
 **方式 B：源码运行（适合开发者/想自己打包）**
 - Python ≥ 3.8
-- Python 库：`requests`、`matplotlib`、`numpy`；打包另需 `pyinstaller`
+- Python 库：`requests`、`matplotlib`、`numpy`、`pystray`；打包另需 `pyinstaller`
 - 运行环境：**需能访问校园网**
 - 邮件用 Python 内置 `smtplib` 直连邮箱 SMTP 服务器（QQ/163/Gmail 等均可），**无需 Node.js / agently-cli**。
 
@@ -214,12 +214,15 @@ SMTP_FROM=                               # 可选：留空则用 SMTP_USER
 
 ### 启动 / 停止 / 调试
 
-> **一个进程搞定全部**：`dorm_elec_auto.py` **自带网页服务**——一边按 `XJTU_INTERVAL_HOURS`（默认 6 小时，可用环境变量覆盖）循环抓取电费，一边在后台起一个本地网页服务（端口 `8765`）把 `deploy/` 实时提供出来。**抓取与网页是同一个进程，停止/启动一体。**
+> **一个进程搞定全部**：`dorm_elec_auto.py` **自带网页服务和系统托盘**——一边按 `XJTU_INTERVAL_HOURS`（默认 6 小时，可用环境变量覆盖）循环抓取电费，一边在后台起本地网页服务（端口 `8765`），并在 Windows 右下角显示运行状态。**抓取、网页和托盘属于同一个进程。**
+>
+> 托盘图标颜色含义：蓝色=正在抓取，绿色=最近成功，红色=最近异常。右键可立即抓取、打开报告、查看日志，以及切换开机自启。
 
 - **启动**：
   - **exe 模式**：直接双击 `宿舍电费监控.exe`（配置已存则直接常驻；首次启动会弹配置向导）；
   - **源码模式**：双击 **`run_dorm.vbs`**（静默拉起 `pythonw`，不弹窗）；或
   - 命令行 `.venv\Scripts\pythonw.exe dorm_elec_auto.py`。
+- **开机自启**：右键托盘图标 → **开机自启**。优先使用任务计划（支持崩溃后重启）；若系统拒绝创建任务，会自动退回当前用户注册表启动项。再次点击即可关闭，两种方式都会清理。
 - **停止**（二选一）：
   - 双击 **`stop_dorm.bat`**（结束 `pythonw.exe` 与 `宿舍电费监控.exe` 并清锁，最稳妥；会短暂弹一个命令行窗口，运行完显示「完成」即可关闭）；
   - 任务管理器里结束 `pythonw.exe` / `宿舍电费监控.exe` 进程。
@@ -247,7 +250,9 @@ SMTP_FROM=                               # 可选：留空则用 SMTP_USER
 
 ```
 dorm-electricity-monitor/          # 项目根目录（git 仓库根）
-├── dorm_elec_auto.py        # 核心脚本（单进程服务）：采集+计算+绘图+邮件(SMTP)推送+报告生成+内置实时网页服务
+├── dorm_elec_auto.py        # 核心脚本（单进程服务）：采集+计算+绘图+邮件推送+网页服务+托盘
+├── tray_ui.py               # Windows 系统托盘：运行状态、立即抓取、报告/日志、自启开关
+├── autostart.py             # 任务计划自启管理（无权限时退回 HKCU Run）
 ├── config_wizard.py         # 首次配置图形向导（tkinter）：exe 双击首启时弹出；也可 python config_wizard.py 重配
 ├── build_exe.py             # 打包脚本：python build_exe.py 一键生成 exe（默认 onedir）
 ├── setup.py                 # 命令行配置工具 → 生成 .env（重跑保留已有值）
@@ -318,7 +323,8 @@ dorm-electricity-monitor/          # 项目根目录（git 仓库根）
 #    其它环境的 matplotlib 在生成图表时可能原生崩溃 segfault）。
 .venv\Scripts\python.exe dorm_elec_auto.py --dry-run      # 0) 校验配置+预览将做什么
 .venv\Scripts\python.exe dorm_elec_auto.py --test-email   # 1) 发测试邮件，确认通道正常
-.venv\Scripts\python.exe dorm_elec_auto.py                # 2) 正常运行一次
+.venv\Scripts\python.exe dorm_elec_auto.py                # 2) 启动托盘+后台常驻
+.venv\Scripts\python.exe dorm_elec_auto.py --no-tray       # 不显示托盘，仅后台常驻
 ```
 
 - **运行日志**：每次运行写入 `dorm_monitor.log`（按大小滚动，保留最近 3 份），含时间戳、步骤与错误原因，排障时优先查看。
