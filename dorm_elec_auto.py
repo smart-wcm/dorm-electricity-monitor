@@ -377,21 +377,42 @@ def save_history(h):
         raise
 
 
+_STILL_ACTIVE = 259  # Win32 STILL_ACTIVE：GetExitCodeProcess 用它表示"进程仍在运行"
+
+
 def _pid_alive(pid):
     """判断 PID 是否仍存活（不依赖锁文件修改时间）。
 
-    Windows 用 kernel32.OpenProcess 探测；其它平台退化为 os.kill(pid, 0)。
+    Windows 用 kernel32 探测；其它平台退化为 os.kill(pid, 0)。
     """
     if os.name == "nt":
         try:
             import ctypes
-            kernel32 = ctypes.windll.kernel32
-            # PROCESS_QUERY_INFORMATION(0x0400) | PROCESS_VM_READ(0x0010)
-            handle = kernel32.OpenProcess(0x0400 | 0x0010, False, pid)
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            # 必须显式声明 restype：HANDLE 在 64 位下是 64 位指针，ctypes 默认按
+            # c_int(32 位) 返回会把句柄截断，取到垃圾值。
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+            kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE,
+                                                   ctypes.POINTER(wintypes.DWORD)]
+            # PROCESS_QUERY_INFORMATION(0x0400)
+            handle = kernel32.OpenProcess(0x0400, False, pid)
             if not handle:
                 return False
-            kernel32.CloseHandle(handle)
-            return True
+            try:
+                # 光看 OpenProcess 成功与否是不够的：进程被强杀后，只要还有句柄引用
+                # 着它的进程对象，OpenProcess 依然会成功（实测会误判成"还活着"）。
+                # 那样一来，残留锁就永远挡着重启；而 _acquire_run_lock 早于
+                # setup_logging()，SystemExit 的提示会被吞掉，表现为进程闪退、退出码 1、
+                # 日志里什么都不留。必须问内核"它结束了没"：STILL_ACTIVE(259) 为仍在运行。
+                code = wintypes.DWORD()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return False
+                return code.value == _STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
         except Exception:
             return False
     try:

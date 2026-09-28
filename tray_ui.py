@@ -39,6 +39,7 @@ class TrayController:
         self._refresh_thread = None
         self._autostart_busy = False
         self._autostart_lock = threading.Lock()
+        self._menu_text = None
 
     @staticmethod
     def _make_image(state):
@@ -113,6 +114,23 @@ class TrayController:
         history_count = status.get("history_count", 0)
         return f"上次运行：{last_run} · 存档 {history_count} 条"
 
+    def _sync_menu(self):
+        """把动态状态行同步进原生菜单。
+
+        pystray 在 Windows 上只在 `icon.menu` 被赋值时构建一次原生 HMENU，右键时
+        直接复用它（_win32.py 的 WM_RBUTTONUP 分支），不会重新求值菜单项文字。
+        余额/时间这类由后台线程改掉的值，不显式 update_menu() 就永远不会显示出来。
+        仅在文字真的变化时重建菜单，避免每 2 秒无谓地销毁/重建。
+        """
+        text = (self._status_line(), self._details_line())
+        if text == self._menu_text:
+            return
+        self._menu_text = text
+        try:
+            self.icon.update_menu()
+        except Exception:
+            pass
+
     @staticmethod
     def _autostart_label():
         return autostart.status_text()
@@ -155,6 +173,7 @@ class TrayController:
                 with self._autostart_lock:
                     self._autostart_busy = False
                 try:
+                    self._menu_text = None  # 菜单已重建，作废缓存交回刷新线程
                     self.icon.update_menu()
                 except Exception:
                     pass
@@ -177,6 +196,7 @@ class TrayController:
         state = status.get("state", "starting")
         self.icon.icon = self._make_image(state)
         self.icon.title = self._tooltip()
+        self._sync_menu()
 
     def _setup(self, icon):
         icon.visible = True
